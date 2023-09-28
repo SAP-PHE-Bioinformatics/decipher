@@ -1,0 +1,235 @@
+#### modify config files with sample sheets ####
+# to test dry run #
+## snakemake --snakefile {pathway to Snakefile} --configfile ./config.yaml --dryrun ##
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shcver2} --use-conda --configfile {pathway to run folder}/config.yaml
+# run in phevir2 conda environment
+
+configfile: "QC_checkpoint_config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+
+#### target rules ####
+if config["HCV"]:
+     rule all:
+          input:
+               expand("input/{sample}_R1.fastq", sample=config["HCV"]),
+               expand("input/{sample}_R2.fastq", sample=config["HCV"]),
+               expand("{sample}/shcver/shcver_input/{sample}_1.fastq", sample=config["HCV"]),
+               expand("{sample}/shcver/shcver_input/{sample}_2.fastq", sample=config["HCV"]),
+               expand("{sample}/shcver/shcver_input/{sample}_convert_1.fastq", sample=config["HCV"]),
+               expand("{sample}/shcver/shcver_input/{sample}_convert_2.fastq", sample=config["HCV"]),
+               directory(expand("{sample}/shcver/shcver1", sample=config["HCV"])),
+               directory(expand("{sample}/shcver/shcver2", sample=config["HCV"])),
+               expand("HCV_consensus/{sample}.consensus.fa", sample=config["HCV"]),
+               expand("HCV_consensus/{sample}.consensus.qual.txt", sample=config["HCV"]),
+               expand("{sample}/abricate.tab", sample=config["HCV"]),
+               "HCV_genotype.tab",
+               expand("{sample}/{sample}_depth.tsv", sample=config["HCV"]),
+               expand("{sample}/{sample}_quast/transposed_report.tsv", sample=config["HCV"]),
+               expand("{sample}/{sample}_quast/quast.log", sample=config["HCV"]),
+               "depth_summary_HCV.tsv",
+               "summary_coverage_HCV.tsv"
+
+### convert input reads into a format that shiver can identify as read1 and read2 ### 
+if config["HCV"]:
+     rule unzip_input:
+          input:
+               r1 = "input/{sample}_R1.fastq.gz",
+               r2 = "input/{sample}_R2.fastq.gz"
+          output:
+               uzr1 = "input/{sample}_R1.fastq",
+               uzr2 = "input/{sample}_R2.fastq"
+          run:
+               shell( """ gunzip {input.r1} """ ), 
+               shell( """ gunzip {input.r2} """ )
+
+if config["HCV"]:
+     rule awk_uzinput:
+          input:
+               uzr1 = rules.unzip_input.output.uzr1,
+               uzr2 = rules.unzip_input.output.uzr2
+          output: 
+               awkr1 = "{sample}/shcver/shcver_input/{sample}_1.fastq",
+               awkr2 = "{sample}/shcver/shcver_input/{sample}_2.fastq"
+          run:
+               shell( """ awk '{{if (NR%4 == 1) {{print $1 "/" $2}} else print}}' {input.uzr1} > {output.awkr1} """ ),
+               shell( """ awk '{{if (NR%4 == 1) {{print $1 "/" $2}} else print}}' {input.uzr2} > {output.awkr2} """ )
+
+if config["HCV"]:
+     rule perl_awkinput:
+          input:
+               awkr1 = rules.awk_uzinput.output.awkr1,
+               awkr2 = rules.awk_uzinput.output.awkr2
+          output:
+               con1 = "{sample}/shcver/shcver_input/{sample}_convert_1.fastq",
+               con2 = "{sample}/shcver/shcver_input/{sample}_convert_2.fastq"
+          shell:
+               """ 
+               perl /phe/tools/decipher/HCV_scripts/shcver/AddPairedEndSuffix.pl {input.awkr1} {output.con1} 1 
+               perl /phe/tools/decipher/HCV_scripts/shcver/AddPairedEndSuffix.pl {input.awkr2} {output.con2} 2 
+               """ 
+
+### start shcver pipeline (part1) ###
+if config["HCV"]:
+     rule shcver1:
+          input: 
+               contigs = "{sample}/{sample}.fasta"
+          output: 
+               directory("{sample}/shcver/shcver1")
+          conda: "shiver"
+          shell:
+               """
+               mkdir {wildcards.sample}/shcver/shcver1
+               cd {wildcards.sample}/shcver/shcver1
+               /phe/tools/decipher/HCV_scripts/shcver/shiver_align_contigs.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample}
+               """
+
+### start shcver pipeline (part2) ###
+if config["HCV"]:
+     rule shcver2:
+          input:
+               contigs = "{sample}/{sample}.fasta",
+               shcver1 = rules.shcver1.output,
+               con1 = rules.perl_awkinput.output.con1,
+               con2 = rules.perl_awkinput.output.con2
+          output: 
+               directory("{sample}/shcver/shcver2")
+          conda: "shiver"
+          shell: 
+               """ 
+               mkdir {wildcards.sample}/shcver/shcver2
+               cd {wildcards.sample}/shcver/shcver2
+               /phe/tools/decipher/HCV_scripts/shcver/shiver_map_reads.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample} ../../../{input.shcver1}/{wildcards.sample}.blast ../../../{input.shcver1}/{wildcards.sample}_cut_wRefs.fasta ../../../{input.con1} ../../../{input.con2} 
+               """
+### build consensus ###
+if config["HCV"]:
+     rule ivar_consensus:
+          input:
+               shcver2 = rules.shcver2.output,
+          output:
+               fasta = "HCV_consensus/{sample}.consensus.fa",
+               qual = "HCV_consensus/{sample}.consensus.qual.txt"
+          conda: "phevir"
+          params:
+               prefix = "HCV_consensus/{sample}.consensus"     
+          shell:
+               """
+               samtools mpileup -A -d 6000000 -B -Q 0 --reference {input.shcver2}/{wildcards.sample}_ref.fasta {input.shcver2}/{wildcards.sample}_remap.bam | ivar consensus -p {params.prefix} -q 20 -t 0.8 -n N
+               """
+### genotype consensus ###
+if config["HCV"]:
+     rule genotype:
+          input: rules.ivar_consensus.output.fasta
+          output: "{sample}/abricate.tab"
+          conda: "phesiqcal"
+          shell:
+               "abricate --db HCVcore {input} > {output}"
+
+if config["HCV"]: 
+     rule abricate_sum:
+          input:
+               expand("{sample}/abricate.tab", sample=config["HCV"])
+          output:
+               "HCV_genotype.tab"
+          conda: "phesiqcal"
+          shell:
+               "abricate --summary {input} > {output}"
+
+### Assess sequencing coverage ###
+def convert_quastTable_to_df(tsv):
+    # Function to convert individual quast summary tables into pandas dataframes for compiling in rule compile_fasta_bam
+    
+     df = pd.read_table(tsv, sep="\t")
+    # Make 'Sample' column (Assembly without '.consensus')
+     df['Sample'] = df['Assembly'].str.replace('.consensus', '')
+    # If sample is empty, quast still runs but does not report Genome fraction (%) or Duplication rate
+     if not 'Genome fraction (%)' in df.columns:
+          df['Genome fraction (%)'] = np.nan
+          df['Duplication ratio'] = np.nan
+     if not 'GC (%)' in df.columns:
+          df['GC (%)'] = np.nan
+     report_columns = ['Sample', 'Genome fraction (%)', 'GC (%)', 'Duplication ratio']
+     return df[report_columns]
+
+if config["HCV"]:
+     rule quast_coverage:
+          input:
+               shcver2 = rules.shcver2.output,
+               consensus = rules.ivar_consensus.output.fasta
+          output:
+               report = "{sample}/{sample}_quast/transposed_report.tsv",
+               log = "{sample}/{sample}_quast/quast.log"
+          conda: "phevir"
+          params:
+               OUT_DIR = "{sample}/{sample}_quast"
+          shell:
+               """
+               quast {input.consensus} -r {input.shcver2}/{wildcards.sample}_ref.fasta --ref-bam {input.shcver2}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               """
+if config["HCV"]:
+     rule compile_qc_fasta:
+          # Compile individual genome assembly stats in summary table
+          input:
+               expand("{sample}/{sample}_quast/transposed_report.tsv", sample=config["HCV"])
+               #expand("rules.quast_coverage.output/transposed_report.tsv", sample=config["HCV"])
+          output:
+               "summary_coverage_HCV.tsv"
+          params:
+               job_name = "-compile_qc_fasta",
+               t = 1,
+               mem = 7000,
+               vmem = 7000,
+               walltime = '480:00:00',
+          run:
+               all_dfs = [convert_quastTable_to_df(tsv) for tsv in input]
+               df = pd.concat(all_dfs, ignore_index=True)
+               df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+### assess sequencing depth ###
+if config["HCV"]:
+     rule samtools_depth:
+          input: 
+               shcver2 = rules.shcver2.output
+          output: "{sample}/{sample}_depth.tsv"
+          conda: "phevir"
+          shell:
+               """
+               samtools depth -aa {input.shcver2}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}
+               """  
+# Compute and compile depth stats from BAM for all HCV of the batch
+
+# Function to convert individual coverage summary tables into pandas dataframes for compiling in rule compile_qc_bam
+def convert_depthTable_to_df(tsv):
+   
+    sample = os.path.basename(tsv)[: -len('_depth.tsv')]
+    df = pd.read_table(tsv, sep="\t", names=['min', 'mean', 'median', 'max'])
+    orig_columns = df.columns.tolist()
+    new_columns = ['Sample'] + orig_columns
+    df['Sample'] = sample
+    return df[new_columns]
+
+if config["HCV"]:   
+     rule depth_summary:
+          input: 
+               expand("{sample}/{sample}_depth.tsv", sample=config["HCV"])
+          output:
+               "depth_summary_HCV.tsv"
+          run:
+               all_dfs = [convert_depthTable_to_df(tsv) for tsv in input]
+               df = pd.concat(all_dfs, ignore_index=True)
+               df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+
+
+
+
+
+
+
+

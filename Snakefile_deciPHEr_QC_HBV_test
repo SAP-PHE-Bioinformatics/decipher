@@ -1,0 +1,333 @@
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shiver1} --use-conda --configfile {pathway to run folder}/config.yaml
+# run in phevir2 conda environment
+
+configfile: "config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import pandas
+import subprocess
+import yaml
+import pandas as pd
+import numpy as np
+import re
+
+#### target rules ####
+
+rule all:
+     input:
+          #expand("trim/{sample}_T1.fastq.gz", sample=config["samples"]),
+          #expand("trim/{sample}_T2.fastq.gz", sample=config["samples"]),
+          #expand("filtered/{sample}_F1.fastq.gz", sample=config["samples"]),
+          #expand("filtered/{sample}_F2.fastq.gz", sample=config["samples"]),
+          #expand("{sample}/input_yield.tab", sample=config["samples"]),
+          #expand("{sample}/trim_yield.tab", sample=config["samples"]),
+          #expand("{sample}/filtered_yield.tab", sample=config["samples"]),
+          #"input_seq_data.tab",
+          #"trim_seq_data.tab",
+          #"filtered_seq_data.tab", 
+          #expand("{sample}/input_kraken2.tab", sample=config["samples"]),
+          #expand("{sample}/trim_kraken2.tab", sample=config["samples"]),
+          #expand("{sample}/filtered_kraken2.tab", sample=config["samples"]),
+          #"trim_species_identification.tab",
+          #"filtered_species_identification.tab",
+          #directory(expand("{sample}/spades", sample=config["samples"])),
+          #expand("{sample}/{sample}.fasta", sample=config["samples"]),
+          #"denovo.tab",
+          #expand("{sample}/contig_kraken2.tab", sample = config["samples"]),
+          "QC_checkpoint_config.yaml"
+
+### prepare reads for downstream processing ###
+# clean up low quality reads and remove adapters #
+#rule fastp:
+#     input:
+#          r1 = "input/{sample}_R1.fastq.gz",
+#          r2 = "input/{sample}_R2.fastq.gz"
+#     output:
+#          t1 = "trim/{sample}_T1.fastq.gz",
+#          t2 = "trim/{sample}_T2.fastq.gz"
+#     shell:
+#          "fastp -i {input.r1} -I {input.r2} -o {output.t1} -O {output.t2}"
+
+# remove human reads #
+#rule bowtieHR:
+#     input:
+#          t1 =  rules.fastp.output.t1,
+#          t2 =  rules.fastp.output.t2
+#     output:
+#          f1 = "filtered/{sample}_F1.fastq.gz",
+#          f2 = "filtered/{sample}_F2.fastq.gz"
+#     conda: "metaphe"
+#     threads: 8
+#     params: 
+#          REF = "/phe/eukaryotic/References/Homo_sapiens/GRCh38.p14/GRCh38.p14"
+#     shell:
+#          "bowtie2 --very-sensitive-local -p {threads} --seed 1000 -x {params.REF} -1 {input.t1} -2 {input.t2} | samtools fastq -1 {output.f1} -2 {output.f2} -f 12 -F 256"
+
+# make sequencing yeild reports #
+#rule fq_input:
+#     input:
+#          r1= "input/{sample}_R1.fastq.gz",
+#          r2= "input/{sample}_R2.fastq.gz"
+#     output:
+#          "{sample}/input_yield.tab"
+#     conda: "phesiqcal"
+#     shell:
+#          "fq {input.r1} {input.r2} > {output}"
+
+#rule fq_trimmed:
+#     input:
+#          t1 = rules.fastp.output.t1,
+#          t2 = rules.fastp.output.t2
+#     output:
+#          "{sample}/trim_yield.tab"
+#     conda: "phesiqcal"
+#     shell:
+#          "fq {input.t1} {input.t2} > {output}" 
+
+#rule fq_filtered:
+#     input:
+#          f1 = rules.bowtieHR.output.f1,
+#          f2 = rules.bowtieHR.output.f2
+#     output:
+#          "{sample}/filtered_yield.tab"
+#     conda: "phesiqcal"
+#     shell:
+#          "fq {input.f1} {input.f2} > {output}"      
+
+# build summaries for sequencing yield reports #
+#rule seq_data_input:
+#     input:
+#          expand("{sample}/input_yield.tab", sample=config["samples"])
+#     output:
+#          "input_seq_data.tab"
+#     shell:
+#          "/phe/tools/decipher/compile_input_seq_data.sh {input} > {output}"
+
+#rule seq_data_trim:
+#    input:
+#        expand("{sample}/trim_yield.tab", sample=config["samples"])
+#    output:
+#        "trim_seq_data.tab"
+#    shell:
+#        "/phe/tools/decipher/compile_trim_seq_data.sh {input} > {output}"
+
+#rule seq_data_filtered:
+#    input:
+#        expand("{sample}/filtered_yield.tab", sample=config["samples"])
+#    output:
+#        "filtered_seq_data.tab"
+#    shell:
+#        "/phe/tools/decipher/compile_filtered_seq_data.sh {input} > {output}"
+
+# generate species ID reports #
+#rule kraken_input:
+#     input:
+#          r1 = "input/{sample}_R1.fastq.gz",
+#          r2 = "input/{sample}_R2.fastq.gz"
+#     output:
+#          "{sample}/input_kraken2.tab"
+#     threads: 4
+#     params:
+#          DB = "/scratch/kraken/k2_pluspf_20220607/"
+#     shell:
+#          "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} --paired {input.r1} {input.r2}"
+
+#rule kraken_trim:
+#     input:
+#          t1 =  rules.fastp.output.t1,
+#          t2 =  rules.fastp.output.t2
+#     output:
+#          "{sample}/trim_kraken2.tab"
+#     threads: 4
+#     params:
+#          DB = "/scratch/kraken/k2_pluspf_20220607/"
+#     shell:
+#          "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} --paired {input.t1} {input.t2}"
+
+#rule kraken_filtered:
+#     input:
+#          f1 = rules.bowtieHR.output.f1,
+#          f2 = rules.bowtieHR.output.f2
+#     output:
+#          "{sample}/filtered_kraken2.tab"
+#     threads: 4
+#     params:
+#          DB = "/scratch/kraken/k2_pluspf_20220607/"
+#     shell:
+#          "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} --paired {input.f1} {input.f2}"
+
+# build summaries for species ID reports #
+#rule trim_combine_kraken:
+#   input:
+#        expand("{sample}/trim_kraken2.tab", sample = config["samples"])
+#   output:
+#        "trim_species_identification.tab"
+#   run:
+#        import pandas, pathlib, subprocess
+#        kfiles = f"{input}".split()
+#        id_table = pandas.DataFrame()
+#        for k in kfiles:
+#            kraken = pathlib.Path(k)
+#            df = pandas.read_csv(kraken, sep = "\t", header =None, names = ['percentage', 'frag1', 'frag2','code','taxon','name'])
+#            df['percentage'] = df['percentage'].apply(lambda x:float(x.strip('%')) if isinstance(x, str) == True else float(x))
+#            df = df.sort_values(by = ['percentage'], ascending = False)
+#            df = df[df['code'].isin(['U','S'])]
+#            df = df.reset_index(drop = True)
+#            tempandasf = pandas.DataFrame()
+#            d = {'#Accession': f"{kraken.parts[0]}",
+#                    '#1 Match': df.loc[0,'name'].strip(), '%1': df.loc[0,'percentage'],
+#                    '#2 Match': df.loc[1,'name'].strip(), '%2': df.loc[1,'percentage'],
+#                    '#3 Match': df.loc[2,'name'].strip(), '%3': df.loc[2,'percentage']}
+
+#            tempandasf = pandas.DataFrame(data = d, index= [0])
+#            if id_table.empty:
+#                    id_table = tempandasf
+#            else:
+#                    id_table = id_table.append(tempandasf, sort = True)
+#        cols_list = ['#Accession', '#1 Match', '%1', '#2 Match', '%2', '#3 Match', '%3']
+#        id_table = id_table.reindex(cols_list, axis = 'columns')
+#        id_table.to_csv(f"{output}", sep = "\t", index = False)
+#        subprocess.run("sed -i 's/%[0-9]/%/g' {output}", shell=True)
+
+#rule filtered_combine_kraken:
+#   input:
+#        expand("{sample}/filtered_kraken2.tab", sample = config["samples"])
+#   output:
+#        "filtered_species_identification.tab"
+#   run:
+#        import pandas, pathlib, subprocess
+#        kfiles = f"{input}".split()
+#        id_table = pandas.DataFrame()
+#        for k in kfiles:
+#            kraken = pathlib.Path(k)
+#            df = pandas.read_csv(kraken, sep = "\t", header =None, names = ['percentage', 'frag1', 'frag2','code','taxon','name'])
+#            df['percentage'] = df['percentage'].apply(lambda x:float(x.strip('%')) if isinstance(x, str) == True else float(x))
+#            df = df.sort_values(by = ['percentage'], ascending = False)
+#            df = df[df['code'].isin(['U','S'])]
+#            df = df.reset_index(drop = True)
+#            tempandasf = pandas.DataFrame()
+#            d = {'#Accession': f"{kraken.parts[0]}",
+#                    '#1 Match': df.loc[0,'name'].strip(), '%1': df.loc[0,'percentage'],
+#                    '#2 Match': df.loc[1,'name'].strip(), '%2': df.loc[1,'percentage'],
+#                    '#3 Match': df.loc[2,'name'].strip(), '%3': df.loc[2,'percentage']}
+
+#            tempandasf = pandas.DataFrame(data = d, index= [0])
+#            if id_table.empty:
+#                    id_table = tempandasf
+#            else:
+#                    id_table = id_table.append(tempandasf, sort = True)
+#        cols_list = ['#Accession', '#1 Match', '%1', '#2 Match', '%2', '#3 Match', '%3']
+#        id_table = id_table.reindex(cols_list, axis = 'columns')
+#        id_table.to_csv(f"{output}", sep = "\t", index = False)
+#        subprocess.run("sed -i 's/%[0-9]/%/g' {output}", shell=True)
+
+### perform denovo assembly on human filtered reads ###
+#rule spades:
+#     input: 
+#          f1 = rules.bowtieHR.output.f1,
+#          f2 = rules.bowtieHR.output.f2
+#     output:
+#          directory("{sample}/spades")
+#     conda: "phesiqcal"
+#     threads: 8  
+#     shell:
+#          "spades.py --meta -t {threads} -o {output} -1 {input.f1} -2 {input.f2}"
+
+#rule remove_small:
+#     input:
+#          rules.spades.output 
+#     output: 
+#          "{sample}/{sample}.fasta"
+#     shell:
+#          "seqtk seq -L 300 {input}/contigs.fasta > {output}" 
+
+# assess denovo assembly quality #
+#rule assembly_quality:
+#     input: 
+#          expand("{sample}/{sample}.fasta", sample=config["samples"])
+#     output: 
+#          "denovo.tab"
+#     conda: "phesiqcal"
+#     shell:
+#          "fa -e -t {input} > {output}"
+
+#rule assembly_speciesID:
+#     input: 
+#          rules.remove_small.output
+#     output:
+#          "{sample}/contig_kraken2.tab"
+#     threads: 4
+#     params:
+#          DB = "/scratch/kraken/k2_pluspf_20220607/"
+#     shell:
+#          "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} {input}"
+          
+# generate QC checkpoint config file before starting HCV and/or HIV scripts, this files checks whether the first or second match is HIV or HCV, AND that there are contigs that match that virus
+rule QC_checkpoint:
+#rule assembly_combine_kraken:
+     input:
+          contig_kraken2 = expand("{sample}/contig_kraken2.tab", sample = config["samples"]),
+#          species_ID = rules.filtered_combine_kraken.output
+          species_ID = "filtered_species_identification.tab"
+     output: 
+          "QC_checkpoint_config.yaml"
+     run:
+          # pull in filtered_species_identification.tab
+          reads=pd.read_csv(f"{input.species_ID}", delimiter='\t', header=0)
+          # create an empty list
+          presence=[]
+          # assign the {samples} variable to be a list of each file given in the expand()
+          samples=f"{input.contig_kraken2}".split()
+          for sample in samples:
+               # read each sample input as a file path
+               kraken=pathlib.Path(sample)
+               # load each sample contigs species ID file and assign column headers
+               contigs=pd.read_csv(kraken, delimiter='\t', header=None,names = ['percentage', 'frag1', 'frag2','code','taxon','name'])
+               # create accession variable for each sample accession number (string split from the path {sample}/contig_kraken2.tab)
+               accession=sample.split('/')
+               accession=accession[0]
+               # remove white spaces from the 'name' column in the contigs species ID file
+               contigs['name']=contigs['name'].str.strip()
+               # make a list of presence / absence based on scanning the contigs species ID file for HBV, HCV, and HIV names [accession #, HBV=True/False, HCV=True/False, HIV=True/False]
+               presence.append([accession, any(contigs['name'].str.contains('.*hepatitis B virus')),'Hepacivirus C' in contigs['name'].values,'Human immunodeficiency virus 1' in contigs['name'].values])
+               print(presence)
+          # convert list of presence / absence to dataframe for all samples
+          presence_df=pd.DataFrame(presence, columns=['accession', 'HBV_presence','HCV_presence','HIV_presence'])
+          # make accessions into strings for merge
+          reads=reads.astype({'#Accession':'string'})
+          presence_df=presence_df.astype({'accession':'string'})
+          # merge filtered_species_identification.tab and presence / absence dataframe by accession #
+          reads=pd.merge(reads, presence_df, left_on='#Accession', right_on='accession')
+          ## create QC checkpoint yaml file for the next part of pipeline
+          hbv_accessions = []
+          hcv_accessions = []
+          hiv_accessions = []
+          # iterate through the reads DataFrame and append accessions to the config yaml based on presence of contigs 
+          print(reads)
+          for index, row in reads.iterrows():
+               print(index,row)
+               if [row['#1 Match'].str.contains('.*hepatitis B virus'), row['#2 Match'].str.contains('.*hepatitis B virus')] and row['HBV_presence']:
+                     hbv_accessions.append(row['accession'])
+               if 'Hepacivirus C' in [row['#1 Match'], row['#2 Match']] and row['HCV_presence']:
+                     hcv_accessions.append(row['accession'])
+               if ('Human immunodeficiency virus 1' in [row['#1 Match'], row['#2 Match']]) and row['HIV_presence']:
+                     hiv_accessions.append(row['accession'])
+          # Create a dictionary for the YAML content
+          yaml_data = {
+               'HBV': hbv_accessions,
+               'HCV': hcv_accessions,
+               'HIV': hiv_accessions
+          }
+
+          # dump the YAML data to write output file 
+          yaml_output = yaml.dump(yaml_data, default_flow_style=False)
+
+          with open(f"{output}", 'w') as yaml_file:
+               yaml_file.write(yaml_output)
+       
+### UPON COMPLETION RUN HBV, HCV and/or HIV PIPELINES #### 
+
+

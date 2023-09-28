@@ -1,0 +1,80 @@
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shiver1} --use-conda --configfile {pathway to run folder}/config.yaml
+# run in phevir2 conda environment
+
+configfile: "config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import pandas
+import subprocess
+
+#### target rules ####
+if config["negative"]:
+     rule all:
+          input:
+               expand("trim/{negative}_T1.fastq.gz", negative=config["negative"]),
+               expand("trim/{negative}_T2.fastq.gz", negative=config["negative"]),
+               expand("filtered/{negative}_F1.fastq.gz", negative=config["negative"]),
+               expand("filtered/{negative}_F2.fastq.gz", negative=config["negative"]),
+               expand("{negative}/neg_yield.tab", negative=config["negative"]),
+               expand("{negative}/neg_kraken2.tab", negative=config["negative"]),
+
+
+### prepare reads for downstream processing ###
+# clean up low quality reads and remove adapters #
+if config["negative"]:
+     rule fastp_neg:
+          input:
+               r1 = "input/{negative}_R1.fastq.gz",
+               r2 = "input/{negative}_R2.fastq.gz"
+          output:
+               t1 = "trim/{negative}_T1.fastq.gz",
+               t2 = "trim/{negative}_T2.fastq.gz" 
+          shell:  
+               "fastp -i {input.r1} -I {input.r2} -o {output.t1} -O {output.t2}"
+
+# remove human reads # 
+if config["negative"]:
+     rule bowtieHR_neg:
+          input:
+               t1 =  rules.fastp_neg.output.t1,
+               t2 =  rules.fastp_neg.output.t2
+          output:
+               f1 = "filtered/{negative}_F1.fastq.gz",
+               f2 = "filtered/{negative}_F2.fastq.gz"
+          conda: "metaphe"
+          threads: 8
+          params: 
+               REF = "/phe/eukaryotic/References/Homo_sapiens/GRCh38.p14/GRCh38.p14"
+          shell:
+               "bowtie2 --very-sensitive-local -p {threads} --seed 1000 -x {params.REF} -1 {input.t1} -2 {input.t2} | samtools fastq -1 {output.f1} -2 {output.f2} -f 12 -F 256"
+
+### perform QC on reads ###
+# analyse sequencing yield #
+if config["negative"]:
+     rule fq_neg:
+          input: 
+               f1 = rules.bowtieHR_neg.output.f1,
+               f2 = rules.bowtieHR_neg.output.f2
+          output:
+               "{negative}/neg_yield.tab"
+          conda: "phesiqcal"
+          shell:
+               "fq {input.f1} {input.f2} > {output}"
+
+# analyse species ID of reads #
+if config["negative"]:
+     rule kraken_neg:
+          input:
+               f1 = rules.bowtieHR_neg.output.f1,
+               f2 = rules.bowtieHR_neg.output.f2 
+          output:
+               "{negative}/neg_kraken2.tab"
+          threads: 4
+          params:
+               DB = "/scratch/kraken/k2_pluspf_20220607/"
+          shell:
+               "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} --paired {input.f1} {input.f2}"
+

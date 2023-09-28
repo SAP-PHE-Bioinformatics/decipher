@@ -1,0 +1,236 @@
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shiver3} --use-conda --configfile {pathway to run folder}/QC_checkpoint_config.yaml
+# run in phevir2 conda environment
+
+configfile: "QC_checkpoint_config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+
+#### target rules ####
+
+rule all:
+   input:
+     expand("input/{sample}_R1.fastq.gz", sample=config["HIV"]),
+     expand("input/{sample}_R2.fastq.gz", sample=config["HIV"]),
+     expand("{sample}/{sample}_pol_aligned.bam", sample=config["HIV"]),
+     expand("{sample}/{sample}_pol_aligned.sorted.bam", sample=config["HIV"]),
+     expand("{sample}/{sample}_pol_aligned.sorted.bam.bai", sample=config["HIV"]),
+     expand("{sample}/{sample}_pol_aligned_depth.txt", sample=config["HIV"]),
+     expand("HIV_pol_consensus/{sample}_pol.consensus.fa",sample=config["HIV"]),
+     expand("HIV_pol_consensus/{sample}_pol.consensus.qual.txt", sample=config["HIV"]),
+     expand("{sample}/{sample}_pol_ref.fasta",sample=config["HIV"]),
+     expand("{sample}/{sample}_quast_pol/transposed_report.tsv",sample=config["HIV"]),
+     expand("{sample}/{sample}_quast_pol/quast.log",sample=config["HIV"]),
+     "summary_coverage_pol.tsv",
+     "depth_summary_pol.tsv",
+     expand("HIV_depth_histograms/{sample}_depth_allpositions.tab", sample=config["HIV"]),
+     expand("HIV_depth_histograms/{sample}_depth_pol.tab", sample=config["HIV"]),
+     expand("{sample}/{sample}_bammix_DRM_position_base_counts.csv", sample=config["HIV"]),
+     expand("{sample}/{sample}_bammix_DRM_position_base_counts.pdf", sample=config["HIV"]),
+     expand("bammix_DRM/{sample}_bammix_DRM_position_base_counts_annotated.csv", sample=config["HIV"])
+
+### convert unzipped input reads back into zipped files to save space in folder ### 
+rule zip_input:
+     input:
+          uzr1 = "input/{sample}_R1.fastq",
+          uzr2 = "input/{sample}_R2.fastq"
+     output:
+          r1 = "input/{sample}_R1.fastq.gz",
+          r2 = "input/{sample}_R2.fastq.gz"
+     run:
+          shell( """ gzip {input.uzr1} """ ), 
+          shell( """ gzip {input.uzr2} """ )
+
+### create QC summaries for pol region ###
+### align each unique shiver reference to stanford pol reference ### 
+rule align_pol:
+     input: "{sample}/shiver/shiver2/{sample}_remap_ref.fasta"
+     output: "{sample}/{sample}_pol_aligned.bam"
+     conda: "phesiqcal"
+     params:
+          REF = "/phe/viro/References/HIV/HIV1PR-RT-IN_stanfordDB_20230310.fna"
+     shell:
+          "minimap2 -ax asm20 {input} {params.REF} -f 16 -p s | samtools view -F 4 -b | samtools view -F 2048 -b > {output}"
+rule sort_pol:
+     input: rules.align_pol.output
+     output: "{sample}/{sample}_pol_aligned.sorted.bam"
+     conda: "phesiqcal"
+     shell:
+          "samtools sort {input} > {output}"
+rule index_pol: 
+     input: rules.sort_pol.output
+     output: "{sample}/{sample}_pol_aligned.sorted.bam.bai"
+     conda: "phesiqcal"
+     shell:
+          "samtools index {input}"
+
+### find the location of pol region by depth of alignment ###
+rule locate_pol:
+     input: 
+          pol_bam = rules.sort_pol.output,
+          idx = rules.index_pol.output
+     output: "{sample}/{sample}_pol_aligned_depth.txt"
+     conda: "phesiqcal"
+     shell:
+          "samtools depth {input.pol_bam} > {output}"
+
+### build pol consensus using start and end location of alignment ###
+rule ivar_HIV_pol_consensus:
+   input:
+        bam = "{sample}/shiver/shiver2/{sample}_remap.bam",
+        pol_local = rules.locate_pol.output
+   output:
+        fasta = "HIV_pol_consensus/{sample}_pol.consensus.fa",
+        qual = "HIV_pol_consensus/{sample}_pol.consensus.qual.txt"
+   params:
+        REF = "{sample}/shiver/shiver2/{sample}_remap_ref.fasta",
+        prefix = "HIV_pol_consensus/{sample}_pol.consensus"     
+   conda: "phevir"
+   shell:
+        """
+        samtools mpileup -A -d 6000000 -B -Q 0 --reference {params.REF} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` {input.bam} | ivar consensus -p {params.prefix} -q 20 -t 0.85 -n N
+        """
+
+### Assess sequencing coverage of pol ###
+
+### create unique pol reference using start and end location of alignment ###
+rule make_pol_ref:
+     input: 
+          remap_ref = "{sample}/shiver/shiver2/{sample}_remap_ref.fasta",
+          pol_local = rules.locate_pol.output
+     output: "{sample}/{sample}_pol_ref.fasta"
+     conda: "phesiqcal"
+     shell: 
+          """
+          samtools faidx {input.remap_ref} {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` > {output}
+          """
+def convert_quastTable_to_df(tsv):
+    # Function to convert individual quast summary tables into pandas dataframes for compiling in rule compile_fasta_bam
+    
+     df = pd.read_table(tsv, sep="\t")
+    # Make 'Sample' column (Assembly without '.consensus')
+     df['Sample'] = df['Assembly'].str.replace('.consensus', '')
+    # If sample is empty, quast still runs but does not report Genome fraction (%) or Duplication rate
+     if not 'Genome fraction (%)' in df.columns:
+          df['Genome fraction (%)'] = np.nan
+          df['Duplication ratio'] = np.nan
+     if not 'GC (%)' in df.columns:
+          df['GC (%)'] = np.nan
+     report_columns = ['Sample', 'Genome fraction (%)', 'GC (%)', 'Duplication ratio']
+     return df[report_columns]
+
+rule quast_pol_coverage:
+     input:
+          bam = "{sample}/shiver/shiver2/{sample}_remap.bam",
+          consensus = rules.ivar_HIV_pol_consensus.output.fasta,
+          pol_ref = rules.make_pol_ref.output
+     output:
+          report = "{sample}/{sample}_quast_pol/transposed_report.tsv",
+          log = "{sample}/{sample}_quast_pol/quast.log"
+     conda: "phevir"
+     params:
+          OUT_DIR = "{sample}/{sample}_quast_pol"
+     shell:
+          """
+          quast {input.consensus} -r {input.pol_ref} --ref-bam {input.bam} --output-dir {params.OUT_DIR}
+          """
+
+rule compile_qc_fasta:
+     # Compile individual genome assembly stats in summary table
+     input:
+          expand("{sample}/{sample}_quast_pol/transposed_report.tsv", sample=config["HIV"])
+     output:
+          "summary_coverage_pol.tsv"
+     params:
+          job_name = "-compile_qc_fasta",
+          t = 1,
+          mem = 7000,
+          vmem = 7000,
+          walltime = '480:00:00',
+     run:
+          all_dfs = [convert_quastTable_to_df(tsv) for tsv in input]
+          df = pd.concat(all_dfs, ignore_index=True)
+          df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+### assess sequencing depth of pol ###
+rule samtools_depth_pol:
+     input: 
+          bam = "{sample}/shiver/shiver2/{sample}_remap.bam",
+          pol_local = rules.locate_pol.output
+     output: "{sample}/{sample}_pol_depth.tsv"
+     conda: "phevir"
+     shell:
+          """
+          samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` | datamash min 3 mean 3 median 3 max 3 > {output}
+          """  
+## Compute and compile depth stats from BAM for all samples of the batch
+
+
+# Function to convert individual coverage summary tables into pandas dataframes for compiling in rule compile_qc_bam
+def convert_depthTable_to_df(tsv):
+   
+    sample = os.path.basename(tsv)[: -len('_pol_depth.tsv')]
+    df = pd.read_table(tsv, sep="\t", names=['min', 'mean', 'median', 'max'])
+    orig_columns = df.columns.tolist()
+    new_columns = ['Sample'] + orig_columns
+    df['Sample'] = sample
+    return df[new_columns]
+
+   
+rule depth_summary:
+     input: 
+          expand("{sample}/{sample}_pol_depth.tsv", sample=config["HIV"])
+     output:
+          "depth_summary_pol.tsv"
+     run:
+          all_dfs = [convert_depthTable_to_df(tsv) for tsv in input]
+          df = pd.concat(all_dfs, ignore_index=True)
+          df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+### generation of depth histograms ###
+rule histogram_WGS:
+     input: "{sample}/shiver/shiver2/{sample}_remap.bam"
+     output: "HIV_depth_histograms/{sample}_depth_allpositions.tab"
+     conda: "phesiqcal"
+     shell:
+          "samtools depth -aa {input} -o {output}"
+
+rule histogram_pol:
+     input: 
+          bam = "{sample}/shiver/shiver2/{sample}_remap.bam",
+          pol_local = rules.locate_pol.output
+     output: "HIV_depth_histograms/{sample}_depth_pol.tab"
+     conda: "phevir"
+     shell:    
+          """
+          samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` > {output}
+          """
+### analysis of mixed bases in drug resistance genes  ###
+rule DR_sites:
+     input:
+          bam = "{sample}/shiver/shiver2/{sample}_remap.bam",
+          pol_local = rules.locate_pol.output     
+     output: 
+          csv = "{sample}/{sample}_bammix_DRM_position_base_counts.csv",
+          pdf = "{sample}/{sample}_bammix_DRM_position_base_counts.pdf",
+          ann = "bammix_DRM/{sample}_bammix_DRM_position_base_counts_annotated.csv"
+     params:
+          mut = "/phe/viro/References/HIV/drug_resistance_sites_from_pol_position_1.txt",
+          # This is a manually curated list of nucleotide positions corresponding to all drug resistance sites within the pol ORF (based on data from Standord DB).
+          # These positions are written relative to position 1 not position 0 (position in reference = DRM nucleotide position-1). 
+          # For codon number conversion, use the third nucleotide position in the codon (DRM codon position = DRM nucleotide position/3). 
+          prefix = "{sample}/{sample}_bammix_DRM"
+     conda: "covid-phylogeny"
+     shell:
+          """
+          start=`awk 'NR==1 {{print$2}}' {input.pol_local}`
+          value=$(<{params.mut})
+          bammix -b {input.bam} -o {params.prefix} -p $(for x in `echo $value` ; do printf "%s " "$(($start+$x))" ; done)
+          awk 'BEGIN{{OFS=FS=","}} NR==1{{$(NF+1)="pol_nuc_position"}} NR>1{{$(NF+1)=$1+1-start}}1' start=$start {wildcards.sample}/{wildcards.sample}_bammix_DRM_position_base_counts.csv > {output.ann}
+          """

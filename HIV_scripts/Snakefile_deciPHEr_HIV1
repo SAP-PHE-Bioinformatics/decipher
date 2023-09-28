@@ -1,0 +1,214 @@
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shiver2} --use-conda --configfile {pathway to run folder}/QC_checkpoint_config.yaml
+# run in phevir2 conda environment
+
+configfile: "QC_checkpoint_config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+
+#### target rules ####
+if config["HIV"]:
+     rule all:
+          input:
+               expand("input/{sample}_R1.fastq", sample=config["HIV"]),
+               expand("input/{sample}_R2.fastq", sample=config["HIV"]),
+               expand("{sample}/shiver/shiver_input/{sample}_1.fastq", sample=config["HIV"]),
+               expand("{sample}/shiver/shiver_input/{sample}_2.fastq", sample=config["HIV"]),
+               expand("{sample}/shiver/shiver_input/{sample}_convert_1.fastq", sample=config["HIV"]),
+               expand("{sample}/shiver/shiver_input/{sample}_convert_2.fastq", sample=config["HIV"]),
+               directory(expand("{sample}/shiver/shiver1", sample=config["HIV"])),
+               directory(expand("{sample}/shiver/shiver2", sample=config["HIV"])),
+               expand("HIV_consensus/{sample}.consensus.fa", sample=config["HIV"]),
+               expand("HIV_consensus/{sample}.consensus.qual.txt", sample=config["HIV"]),
+               expand("{sample}/{sample}_depth.tsv", sample=config["HIV"]),
+               expand("{sample}/{sample}_quast/transposed_report.tsv", sample=config["HIV"]),
+               expand("{sample}/{sample}_quast/quast.log", sample=config["HIV"]),
+               "depth_summary_HIV.tsv",
+               "summary_coverage_HIV.tsv"
+
+### convert input reads into a format that shiver can identify as read1 and read2 ### 
+if config["HIV"]:
+     rule unzip_input:
+          input:
+               r1 = "input/{sample}_R1.fastq.gz",
+               r2 = "input/{sample}_R2.fastq.gz"
+          output:
+               uzr1 = "input/{sample}_R1.fastq",
+               uzr2 = "input/{sample}_R2.fastq"
+          run:
+               shell( """ gunzip {input.r1} """ ), 
+               shell( """ gunzip {input.r2} """ )
+
+if config["HIV"]:
+     rule awk_uzinput:
+          input:
+               uzr1 = rules.unzip_input.output.uzr1,
+               uzr2 = rules.unzip_input.output.uzr2
+          output: 
+               awkr1 = "{sample}/shiver/shiver_input/{sample}_1.fastq",
+               awkr2 = "{sample}/shiver/shiver_input/{sample}_2.fastq"
+          run:
+               shell( """ awk '{{if (NR%4 == 1) {{print $1 "/" $2}} else print}}' {input.uzr1} > {output.awkr1} """ ),
+               shell( """ awk '{{if (NR%4 == 1) {{print $1 "/" $2}} else print}}' {input.uzr2} > {output.awkr2} """ )
+
+if config["HIV"]:
+     rule perl_awkinput:
+          input:
+               awkr1 = rules.awk_uzinput.output.awkr1,
+               awkr2 = rules.awk_uzinput.output.awkr2
+          
+          output:
+               con1 = "{sample}/shiver/shiver_input/{sample}_convert_1.fastq",
+               con2 = "{sample}/shiver/shiver_input/{sample}_convert_2.fastq"
+          shell:
+               """ 
+               perl /phe/tools/decipher/HIV_scripts/shiver/AddPairedEndSuffix.pl {input.awkr1} {output.con1} 1 
+               perl /phe/tools/decipher/HIV_scripts/shiver/AddPairedEndSuffix.pl {input.awkr2} {output.con2} 2 
+               """ 
+
+### start shiver pipeline (part1) ###
+if config["HIV"]:
+     rule shiver1:
+          input: 
+               contigs = "{sample}/{sample}.fasta"
+          output: 
+               directory("{sample}/shiver/shiver1")
+          conda: "shiver"
+          shell:
+               """
+               mkdir {wildcards.sample}/shiver/shiver1
+               cd {wildcards.sample}/shiver/shiver1
+               /phe/tools/decipher/HIV_scripts/shiver/shiver_align_contigs.sh /phe/tools/decipher/HIV_scripts/shiver/MyInitDir /phe/tools/decipher/HIV_scripts/shiver/config.sh ../../../{input.contigs} {wildcards.sample}
+               """
+
+### start shiver pipeline (part2) ###
+if config["HIV"]:
+     rule shiver2:
+          input:
+               contigs = "{sample}/{sample}.fasta",
+               shiver1 = rules.shiver1.output,
+               con1 = rules.perl_awkinput.output.con1,
+               con2 = rules.perl_awkinput.output.con2
+          output: 
+               directory("{sample}/shiver/shiver2")
+          conda: "shiver"
+          shell: 
+               """ 
+               mkdir {wildcards.sample}/shiver/shiver2
+               cd {wildcards.sample}/shiver/shiver2
+               /phe/tools/decipher/HIV_scripts/shiver/shiver_map_reads.sh /phe/tools/decipher/HIV_scripts/shiver/MyInitDir /phe/tools/decipher/HIV_scripts/shiver/config.sh ../../../{input.contigs} {wildcards.sample} ../../../{input.shiver1}/{wildcards.sample}.blast ../../../{input.shiver1}/{wildcards.sample}_cut_wRefs.fasta ../../../{input.con1} ../../../{input.con2} 
+               """
+### build consensus ###
+if config["HIV"]:
+     rule ivar_consensus:
+          input:
+               shiver2 = rules.shiver2.output,
+          output:
+               fasta = "HIV_consensus/{sample}.consensus.fa",
+               qual = "HIV_consensus/{sample}.consensus.qual.txt"
+          params:
+               prefix = "HIV_consensus/{sample}.consensus"     
+          shell:
+               """
+               samtools mpileup -A -d 6000000 -B -Q 0 --reference {input.shiver2}/{wildcards.sample}_ref.fasta {input.shiver2}/{wildcards.sample}_remap.bam | ivar consensus -p {params.prefix} -q 20 -t 0.85 -n N
+               """
+### Assess sequencing coverage ###
+def convert_quastTable_to_df(tsv):
+    # Function to convert individual quast summary tables into pandas dataframes for compiling in rule compile_fasta_bam
+    
+     df = pd.read_table(tsv, sep="\t")
+    # Make 'Sample' column (Assembly without '.consensus')
+     df['Sample'] = df['Assembly'].str.replace('.consensus', '')
+    # If sample is empty, quast still runs but does not report Genome fraction (%) or Duplication rate
+     if not 'Genome fraction (%)' in df.columns:
+          df['Genome fraction (%)'] = np.nan
+          df['Duplication ratio'] = np.nan
+     if not 'GC (%)' in df.columns:
+          df['GC (%)'] = np.nan
+     report_columns = ['Sample', 'Genome fraction (%)', 'GC (%)', 'Duplication ratio']
+     return df[report_columns]
+
+if config["HIV"]:
+     rule quast_coverage:
+          input:
+               shiver2 = rules.shiver2.output,
+               consensus = rules.ivar_consensus.output.fasta
+          output:
+               report = "{sample}/{sample}_quast/transposed_report.tsv",
+               log = "{sample}/{sample}_quast/quast.log"
+          conda: "phevir"
+          params:
+               OUT_DIR = "{sample}/{sample}_quast"
+          shell:
+               """
+               quast {input.consensus} -r {input.shiver2}/{wildcards.sample}_ref.fasta --ref-bam {input.shiver2}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               """
+
+if config["HIV"]:
+     rule compile_qc_fasta:
+          # Compile individual genome assembly stats in summary table
+          input:
+               expand("{sample}/{sample}_quast/transposed_report.tsv", sample=config["HIV"])
+               #expand("rules.quast_coverage.output/transposed_report.tsv", sample=config["HIV"])
+          output:
+               "summary_coverage_HIV.tsv"
+          params:
+               job_name = "-compile_qc_fasta",
+               t = 1,
+               mem = 7000,
+               vmem = 7000,
+               walltime = '480:00:00',
+          run:
+               all_dfs = [convert_quastTable_to_df(tsv) for tsv in input]
+               df = pd.concat(all_dfs, ignore_index=True)
+               df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+### assess sequencing depth ###
+if config["HIV"]:
+     rule samtools_depth:
+          input: 
+               shiver2 = rules.shiver2.output
+          output: "{sample}/{sample}_depth.tsv"
+          conda: "phevir"
+          shell:
+               """
+               samtools depth -aa {input.shiver2}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}
+               """  
+# Compute and compile depth stats from BAM for all samples of the batch
+
+
+# Function to convert individual coverage summary tables into pandas dataframes for compiling in rule compile_qc_bam
+def convert_depthTable_to_df(tsv):
+   
+    sample = os.path.basename(tsv)[: -len('_depth.tsv')]
+    df = pd.read_table(tsv, sep="\t", names=['min', 'mean', 'median', 'max'])
+    orig_columns = df.columns.tolist()
+    new_columns = ['Sample'] + orig_columns
+    df['Sample'] = sample
+    return df[new_columns]
+
+if config["HIV"]:   
+     rule depth_summary:
+          input: 
+               expand("{sample}/{sample}_depth.tsv", sample=config["HIV"])
+          output:
+               "depth_summary_HIV.tsv"
+          run:
+               all_dfs = [convert_depthTable_to_df(tsv) for tsv in input]
+               df = pd.concat(all_dfs, ignore_index=True)
+               df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+
+
+
+
+
+
+
+

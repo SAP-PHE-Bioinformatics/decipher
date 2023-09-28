@@ -1,0 +1,15 @@
+check again for fail points throughout bash, i.e. || { echo 'error'; exit 1; } for every command that doesn't haven't a vanishingly small probability of failure.
+
+Add a maximum gap fraction option to SplitGappyContigs.py (<=50%? histogram)
+
+fastp program to replace fastaq & Trimmomatic for read trimming?
+
+contig correction: blastn and megablast merged
+
+contig correction: one blast without max-target-seqs = 1 in order to decided what sequence to trim, and one with, to decide where to cut? Or perhaps max-target-seqs > 1 is also fine for choosing where to cut? Run CorrectContigs.py on blast results with and without, get it to output just the blast hits it's keeping after discaring those wholly inside another, and compare.
+
+trim off any overhang past the beginning or end of the alignment (optionally, default yes)
+
+trim off incomplete bit of nef from the alignment? Not reliable for mapping? Reliable for which reads went into which end during de novo asembly?
+
+exit status of 3 if no consensus could be called from round 1 (some reads mapped but they were below the coverage threshold). What happens currently if remap=true?

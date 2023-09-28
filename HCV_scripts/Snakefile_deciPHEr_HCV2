@@ -1,0 +1,41 @@
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_sHCVer3} --use-conda --configfile {pathway to run folder}/QC_checkpoint_config.yaml
+# run in phevir2 conda environment
+
+configfile: "QC_checkpoint_config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+
+#### target rules ####
+
+rule all:
+   input:
+     expand("input/{sample}_R1.fastq.gz", sample=config["HCV"]),
+     expand("input/{sample}_R2.fastq.gz", sample=config["HCV"]),
+     expand("HCV_depth_histograms/{sample}_depth_allpositions.tab", sample=config["HCV"]),
+
+### convert unzipped input reads back into zipped files to save space in folder ### 
+rule zip_input:
+     input:
+          uzr1 = "input/{sample}_R1.fastq",
+          uzr2 = "input/{sample}_R2.fastq"
+     output:
+          r1 = "input/{sample}_R1.fastq.gz",
+          r2 = "input/{sample}_R2.fastq.gz"
+     run:
+          shell( """ gzip {input.uzr1} """ ), 
+          shell( """ gzip {input.uzr2} """ )
+
+### generation of depth histograms ###
+rule histogram_WGS:
+     input: "{sample}/shcver/shcver2/{sample}_remap.bam"
+     output: "HCV_depth_histograms/{sample}_depth_allpositions.tab"
+     conda: "phesiqcal"
+     shell:
+          "samtools depth -aa {input} -o {output}"

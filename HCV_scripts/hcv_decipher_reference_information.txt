@@ -1,0 +1,39 @@
+Sequence database:
+
+https://hcv.lanl.gov/components/sequence/HCV/search/searchi.html
+
+options:
+
+Accession number: (leave blank)
+Sequence name: (leave blank)
+Sequence length:(leave blank)
+Genotype: Any Genotype
+Subtype: Any Subtype
+Include recombinants (select)
+Confirmed only (select)
+Genomic region: complete genome
+Search (select)
+Exclude related (select)
+Select all (select)
+Download sequences (select)
+Align (select)
+Format: Fasta
+Gap handling: none
+Sequence type: Nucleotides
+Include genotype reference sequences (select)
+Include H77(NC_004102) reference sequence (select)
+Label sequences: compose a label
+Compose sequence labels:
+Genotype: 1
+Accession number: 2
+Sampling country: 3
+Sampling date: 4
+Clone name: 5
+OK (select)
+OK (select)
+
+then added in two genotype 8 reference genomes from NCBI using mafft (MH590698, MH590701)
+mafft --add /phe/viro/References/HCV/genotype_8_concat.fasta ~/tools/HCV_scripts/shcver/HCVRefAlignment.fasta > ~/tools/HCV_scripts/shcver/HCVRefAlignment_plusGT8.fasta
+
+the current database contains 2784 refereces
+
