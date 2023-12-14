@@ -72,15 +72,20 @@ source /phe/tools/miniconda3/etc/profile.d/conda.sh
 
 conda activate phevir2
 
-### Running deciPHEr_HIV/HCV1 on slurm
+### Running deciPHEr_HIV/HCV/HBV1 on slurm
 deciPHEr_HIV1=$(sbatch --dependency=afterok:${JOBID_deciPHEr_QC} --job-name deciPHEr_HIV1 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap "snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HIV_scripts/Snakefile_deciPHEr_HIV1 " )
 deciPHEr_HCV1=$(sbatch --dependency=afterok:${JOBID_deciPHEr_QC} --job-name deciPHEr_HCV1 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap "snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HCV_scripts/Snakefile_deciPHEr_HCV1 " )
-## Identify job_id of deciPHEr_HIV1 and deciPHEr_HCV1 on slurm
+deciPHEr_HBV1=$(sbatch --dependency=afterok:${JOBID_deciPHEr_QC} --job-name deciPHEr_HBV1 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap "snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HBV_scripts/Snakefile_deciPHEr_HBV1 " )
+
+## Identify job_id of deciPHEr_HIV1, deciPHEr_HCV1 and deciPHEr_HBV1 on slurm
 array=(${deciPHEr_HIV1// / })
 JOBID_deciPHEr_HIV1=${array[3]}
 
 array=(${deciPHEr_HCV1// / })
 JOBID_deciPHEr_HCV1=${array[3]}
+
+array=(${deciPHEr_HBV1// / })
+JOBID_deciPHEr_HBV1=${array[3]}
 
 ### Load phevir2 module
 
@@ -88,6 +93,7 @@ source /phe/tools/miniconda3/etc/profile.d/conda.sh
 
 conda activate phevir2
 
-### Running deciPHEr_HIV/HCV2 on slurm
+### Running deciPHEr_HIV/HCV/HBV2 on slurm
 deciPHEr_HIV2=$(sbatch --dependency=afterok:${JOBID_deciPHEr_HIV1} --job-name deciPHEr_HIV2 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap " snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HIV_scripts/Snakefile_deciPHEr_HIV2 ")
 deciPHEr_HCV2=$(sbatch --dependency=afterok:${JOBID_deciPHEr_HCV1} --job-name deciPHEr_HCV2 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap " snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HCV_scripts/Snakefile_deciPHEr_HCV2 ")
+deciPHEr_HBV2=$(sbatch --dependency=afterok:${JOBID_deciPHEr_HBV1} --job-name deciPHEr_HBV2 --mem 50G --ntasks 8 --time 960:00:00 -D /scratch/decipher/$folder --wrap " snakemake -j 8 --use-conda --configfile /scratch/decipher/$folder/QC_checkpoint_config.yaml --snakefile /phe/tools/decipher/HBV_scripts/Snakefile_deciPHEr_HBV2 ")

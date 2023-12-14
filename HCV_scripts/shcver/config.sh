@@ -225,7 +225,7 @@ MapContaminantReads=false
 # If you are using HXB2 as the reference for mapping (instead of a reference
 # constructed out of contigs as is normal for shiver), set this to false or
 # there will be a problem with two identically named sequences.
-GiveHXB2coords=true
+GiveHXB2coords=false
 
 # Shall we align the contigs to the consensus, for comparison?
 AlignContigsToConsensus=false

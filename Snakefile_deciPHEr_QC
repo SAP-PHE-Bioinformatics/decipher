@@ -264,7 +264,7 @@ rule assembly_speciesID:
      shell:
           "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} {input}"
           
-# generate QC checkpoint config file before starting HCV and/or HIV scripts, this files checks whether the first or second match is HIV or HCV, AND that there are contigs that match that virus
+# generate QC checkpoint config file before starting HBV, HCV and/or HIV scripts, this files checks whether the species match is HBV, HIV or HCV, AND that there are contigs that match that virus
 rule QC_checkpoint:
 #rule assembly_combine_kraken:
      input:
@@ -290,26 +290,35 @@ rule QC_checkpoint:
                # remove white spaces from the 'name' column in the contigs species ID file
                contigs['name']=contigs['name'].str.strip()
                # make a list of presence / absence based on scanning the contigs species ID file for HBV, HCV, and HIV names [accession #, HBV=True/False, HCV=True/False, HIV=True/False]
-               presence.append([accession,'Hepacivirus C' in contigs['name'].values,'Human immunodeficiency virus 1' in contigs['name'].values])
+               presence.append([accession, any(contigs['name'].str.contains('hepatitis B virus')),'Hepacivirus C' in contigs['name'].values,'Human immunodeficiency virus 1' in contigs['name'].values])
         
           # convert list of presence / absence to dataframe for all samples
-          presence_df=pd.DataFrame(presence, columns=['accession', 'HCV_presence','HIV_presence'])
+          print(presence)
+          presence_df=pd.DataFrame(presence, columns=['accession', 'HBV_presence', 'HCV_presence','HIV_presence'])
           # make accessions into strings for merge
           reads=reads.astype({'#Accession':'string'})
           presence_df=presence_df.astype({'accession':'string'})
           # merge filtered_species_identification.tab and presence / absence dataframe by accession #
           reads=pd.merge(reads, presence_df, left_on='#Accession', right_on='accession')
+          print(reads)
           ## create QC checkpoint yaml file for the next part of pipeline
+          hbv_accessions = []
           hcv_accessions = []
           hiv_accessions = []
           # iterate through the reads DataFrame and append accessions to the config yaml based on presence of contigs 
           for index, row in reads.iterrows():
+               if ('Capuchin monkey hepatitis B virus' in [row['#1 Match'], row['#2 Match'], row['#3 Match']] or 'Woolly monkey hepatitis B virus' in [row['#1 Match'], row['#2 Match'], row['#3 Match']]) and row['HBV_presence']:
+                     hbv_accessions.append(row['accession'])
                if 'Hepacivirus C' in [row['#1 Match'], row['#2 Match']] and row['HCV_presence']:
                      hcv_accessions.append(row['accession'])
                if ('Human immunodeficiency virus 1' in [row['#1 Match'], row['#2 Match']]) and row['HIV_presence']:
                      hiv_accessions.append(row['accession'])
+          print(hbv_accessions)
+          print(hcv_accessions)
+          print(hiv_accessions)
           # Create a dictionary for the YAML content
           yaml_data = {
+               'HBV': hbv_accessions,
                'HCV': hcv_accessions,
                'HIV': hiv_accessions
           }
@@ -320,6 +329,6 @@ rule QC_checkpoint:
           with open(f"{output}", 'w') as yaml_file:
                yaml_file.write(yaml_output)
        
-### UPON COMPLETION RUN HCV and/or HIV PIPELINES #### 
+### UPON COMPLETION RUN HBV, HCV and/or HIV PIPELINES #### 
 
 
