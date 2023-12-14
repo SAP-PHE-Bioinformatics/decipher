@@ -1,0 +1,19 @@
+### HIV reference database information
+
+## Database source: https://www.hiv.lanl.gov/content/sequence/NEWALIGN/align.html
+
+## settings for download:
+
+Alignment type: Subtype Reference
+Organism: HIV-1/SIVcpz
+Region: GENOME
+Subtype: All
+DNA/Protein: DNA
+Year: 2020
+Format: Fasta
+
+{get alignment}
+
+Number of sequences: 459
+
+This alignment was used to initialise the database for HIV

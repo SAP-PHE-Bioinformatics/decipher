@@ -18,7 +18,19 @@ rule all:
    input:
      expand("input/{sample}_R1.fastq.gz", sample=config["HCV"]),
      expand("input/{sample}_R2.fastq.gz", sample=config["HCV"]),
+     expand("{sample}/{sample}_core_aligned.bam", sample=config["HCV"]),
+     expand("{sample}/{sample}_core_aligned.sorted.bam", sample=config["HCV"]),
+     expand("{sample}/{sample}_core_aligned.sorted.bam.bai", sample=config["HCV"]),
+     expand("{sample}/{sample}_core_aligned_depth.txt", sample=config["HCV"]),
+     expand("HCV_core_consensus/{sample}_core.consensus.fa",sample=config["HCV"]),
+     expand("HCV_core_consensus/{sample}_core.consensus.qual.txt", sample=config["HCV"]),
+     expand("{sample}/{sample}_core_ref.fasta",sample=config["HCV"]),
+     expand("{sample}/{sample}_quast_core/transposed_report.tsv",sample=config["HCV"]),
+     expand("{sample}/{sample}_quast_core/quast.log",sample=config["HCV"]),
+     "summary_coverage_core.tsv",
+     "depth_summary_core.tsv",
      expand("HCV_depth_histograms/{sample}_depth_allpositions.tab", sample=config["HCV"]),
+     expand("HCV_depth_histograms/{sample}_depth_core.tab", sample=config["HCV"])
 
 ### convert unzipped input reads back into zipped files to save space in folder ### 
 rule zip_input:
@@ -32,10 +44,166 @@ rule zip_input:
           shell( """ gzip {input.uzr1} """ ), 
           shell( """ gzip {input.uzr2} """ )
 
+### create QC summaries for core region ###
+### align each unique shcver reference to stanford core reference ### 
+rule align_core:
+     input: "{sample}/shcver/shcver_output/{sample}_remap_ref.fasta"
+     output: "{sample}/{sample}_core_aligned.bam"
+     conda: "phesiqcal"
+     params:
+          REF = "/phe/viro/References/HCV/GCF_000861845.1_ViralProj15432_core.fna"
+     shell:
+          "minimap2 -a -A4 {input} {params.REF} -f 16 -p s | samtools view -F 4 -b | samtools view -F 2048 -b > {output}"
+rule sort_core:
+     input: rules.align_core.output
+     output: "{sample}/{sample}_core_aligned.sorted.bam"
+     conda: "phesiqcal"
+     shell:
+          "samtools sort {input} > {output}"
+rule index_core: 
+     input: rules.sort_core.output
+     output: "{sample}/{sample}_core_aligned.sorted.bam.bai"
+     conda: "phesiqcal"
+     shell:
+          "samtools index {input}"
+
+### find the location of core region by depth of alignment ###
+rule locate_core:
+     input: 
+          core_bam = rules.sort_core.output,
+          idx = rules.index_core.output
+     output: "{sample}/{sample}_core_aligned_depth.txt"
+     conda: "phesiqcal"
+     shell:
+          "samtools depth {input.core_bam} > {output}"
+
+### build core consensus using start and end location of alignment ###
+rule ivar_HCV_core_consensus:
+   input:
+        bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
+        core_local = rules.locate_core.output
+   output:
+        fasta = "HCV_core_consensus/{sample}_core.consensus.fa",
+        qual = "HCV_core_consensus/{sample}_core.consensus.qual.txt"
+   params:
+        REF = "{sample}/shcver/shcver_output/{sample}_remap_ref.fasta",
+        prefix = "HCV_core_consensus/{sample}_core.consensus"     
+   conda: "phevir"
+   shell:
+        """
+        samtools mpileup -A -d 6000000 -B -Q 0 --reference {params.REF} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` {input.bam} | ivar consensus -p {params.prefix} -q 20 -t 0.85 -n N
+        """
+
+### Assess sequencing coverage of core ###
+
+### create unique core reference using start and end location of alignment ###
+rule make_core_ref:
+     input: 
+          remap_ref = "{sample}/shcver/shcver_output/{sample}_remap_ref.fasta",
+          core_local = rules.locate_core.output
+     output: "{sample}/{sample}_core_ref.fasta"
+     conda: "phesiqcal"
+     shell: 
+          """
+          samtools faidx {input.remap_ref} {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` > {output}
+          """
+
+def convert_quastTable_to_df(tsv):
+    # Function to convert individual quast summary tables into pandas dataframes for compiling in rule compile_fasta_bam
+    
+     df = pd.read_table(tsv, sep="\t")
+    # Make 'Sample' column (Assembly without '.consensus')
+     df['Sample'] = df['Assembly'].str.replace('.consensus', '')
+    # If sample is empty, quast still runs but does not report Genome fraction (%) or Duplication rate
+     if not 'Genome fraction (%)' in df.columns:
+          df['Genome fraction (%)'] = np.nan
+          df['Duplication ratio'] = np.nan
+     if not 'GC (%)' in df.columns:
+          df['GC (%)'] = np.nan
+     report_columns = ['Sample', 'Genome fraction (%)', 'GC (%)', 'Duplication ratio']
+     return df[report_columns]
+
+rule quast_core_coverage:
+     input:
+          bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
+          consensus = rules.ivar_HCV_core_consensus.output.fasta,
+          core_ref = rules.make_core_ref.output
+     output:
+          report = "{sample}/{sample}_quast_core/transposed_report.tsv",
+          log = "{sample}/{sample}_quast_core/quast.log"
+     conda: "phevir"
+     params:
+          OUT_DIR = "{sample}/{sample}_quast_core"
+     shell:
+          """
+          quast {input.consensus} -r {input.core_ref} --ref-bam {input.bam} --output-dir {params.OUT_DIR}
+          """
+
+rule compile_qc_fasta:
+     # Compile individual genome assembly stats in summary table
+     input:
+          expand("{sample}/{sample}_quast_core/transposed_report.tsv", sample=config["HCV"])
+     output:
+          "summary_coverage_core.tsv"
+     params:
+          job_name = "-compile_qc_fasta",
+          t = 1,
+          mem = 7000,
+          vmem = 7000,
+          walltime = '480:00:00',
+     run:
+          all_dfs = [convert_quastTable_to_df(tsv) for tsv in input]
+          df = pd.concat(all_dfs, ignore_index=True)
+          df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
+### assess sequencing depth of core ###
+rule samtools_depth_core:
+     input: 
+          bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
+          core_local = rules.locate_core.output
+     output: "{sample}/{sample}_core_depth.tsv"
+     conda: "phevir"
+     shell:
+          """
+          samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` | datamash min 3 mean 3 median 3 max 3 > {output}
+          """  
+
+# Function to convert individual coverage summary tables into pandas dataframes for compiling in rule compile_qc_bam
+def convert_depthTable_to_df(tsv):
+   
+    sample = os.path.basename(tsv)[: -len('_core_depth.tsv')]
+    df = pd.read_table(tsv, sep="\t", names=['min', 'mean', 'median', 'max'])
+    orig_columns = df.columns.tolist()
+    new_columns = ['Sample'] + orig_columns
+    df['Sample'] = sample
+    return df[new_columns]
+
+   
+rule depth_summary:
+     input: 
+          expand("{sample}/{sample}_core_depth.tsv", sample=config["HCV"])
+     output:
+          "depth_summary_core.tsv"
+     run:
+          all_dfs = [convert_depthTable_to_df(tsv) for tsv in input]
+          df = pd.concat(all_dfs, ignore_index=True)
+          df.to_csv(str(output), sep='\t', index=False, float_format='%.2f')
+
 ### generation of depth histograms ###
 rule histogram_WGS:
-     input: "{sample}/shcver/shcver2/{sample}_remap.bam"
+     input: "{sample}/shcver/shcver_output/{sample}_remap.bam"
      output: "HCV_depth_histograms/{sample}_depth_allpositions.tab"
      conda: "phesiqcal"
      shell:
           "samtools depth -aa {input} -o {output}"
+
+rule histogram_core:
+     input: 
+          bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
+          core_local = rules.locate_core.output
+     output: "HCV_depth_histograms/{sample}_depth_core.tab"
+     conda: "phevir"
+     shell:    
+          """
+          samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` > {output}
+          """

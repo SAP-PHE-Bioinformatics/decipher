@@ -1,7 +1,7 @@
 #### modify config files with sample sheets ####
 # to test dry run #
 ## snakemake --snakefile {pathway to Snakefile} --configfile ./config.yaml --dryrun ##
-# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shcver2} --use-conda --configfile {pathway to run folder}/config.yaml
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile_shcver} --use-conda --configfile {pathway to run folder}/config.yaml
 # run in phevir2 conda environment
 
 configfile: "QC_checkpoint_config.yaml"
@@ -24,8 +24,7 @@ if config["HCV"]:
                expand("{sample}/shcver/shcver_input/{sample}_2.fastq", sample=config["HCV"]),
                expand("{sample}/shcver/shcver_input/{sample}_convert_1.fastq", sample=config["HCV"]),
                expand("{sample}/shcver/shcver_input/{sample}_convert_2.fastq", sample=config["HCV"]),
-               directory(expand("{sample}/shcver/shcver1", sample=config["HCV"])),
-               directory(expand("{sample}/shcver/shcver2", sample=config["HCV"])),
+               directory(expand("{sample}/shcver/shcver_output", sample=config["HCV"])),
                expand("HCV_consensus/{sample}.consensus.fa", sample=config["HCV"]),
                expand("HCV_consensus/{sample}.consensus.qual.txt", sample=config["HCV"]),
                expand("{sample}/abricate.tab", sample=config["HCV"]),
@@ -75,43 +74,33 @@ if config["HCV"]:
                perl /phe/tools/decipher/HCV_scripts/shcver/AddPairedEndSuffix.pl {input.awkr2} {output.con2} 2 
                """ 
 
-### start shcver pipeline (part1) ###
+### start shcver pipeline (part1 and part2) ###
 if config["HCV"]:
-     rule shcver1:
+     rule shcver:
           input: 
-               contigs = "{sample}/{sample}.fasta"
-          output: 
-               directory("{sample}/shcver/shcver1")
-          conda: "shiver"
-          shell:
-               """
-               mkdir {wildcards.sample}/shcver/shcver1
-               cd {wildcards.sample}/shcver/shcver1
-               /phe/tools/decipher/HCV_scripts/shcver/shiver_align_contigs.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample}
-               """
-
-### start shcver pipeline (part2) ###
-if config["HCV"]:
-     rule shcver2:
-          input:
                contigs = "{sample}/{sample}.fasta",
-               shcver1 = rules.shcver1.output,
                con1 = rules.perl_awkinput.output.con1,
                con2 = rules.perl_awkinput.output.con2
           output: 
-               directory("{sample}/shcver/shcver2")
+               directory("{sample}/shcver/shcver_output")
           conda: "shiver"
-          shell: 
-               """ 
-               mkdir {wildcards.sample}/shcver/shcver2
-               cd {wildcards.sample}/shcver/shcver2
-               /phe/tools/decipher/HCV_scripts/shcver/shiver_map_reads.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample} ../../../{input.shcver1}/{wildcards.sample}.blast ../../../{input.shcver1}/{wildcards.sample}_cut_wRefs.fasta ../../../{input.con1} ../../../{input.con2} 
+          shell:
                """
+               mkdir {wildcards.sample}/shcver/shcver_output
+               cd {wildcards.sample}/shcver/shcver_output
+               /phe/tools/decipher/HCV_scripts/shcver/shiver_align_contigs.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample}
+               if test -f {wildcards.sample}_cut_wRefs.fasta
+                    then /phe/tools/decipher/HCV_scripts/shcver/shiver_map_reads.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample} {wildcards.sample}.blast {wildcards.sample}_cut_wRefs.fasta ../../../{input.con1} ../../../{input.con2} 
+               else
+                    /phe/tools/decipher/HCV_scripts/shcver/shiver_map_reads.sh /phe/tools/decipher/HCV_scripts/shcver/HCVInitDir /phe/tools/decipher/HCV_scripts/shcver/config.sh ../../../{input.contigs} {wildcards.sample} {wildcards.sample}.blast {wildcards.sample}_raw_wRefs.fasta ../../../{input.con1} ../../../{input.con2}
+               fi
+               """
+
 ### build consensus ###
 if config["HCV"]:
      rule ivar_consensus:
           input:
-               shcver2 = rules.shcver2.output,
+               shcver = rules.shcver.output,
           output:
                fasta = "HCV_consensus/{sample}.consensus.fa",
                qual = "HCV_consensus/{sample}.consensus.qual.txt"
@@ -120,7 +109,7 @@ if config["HCV"]:
                prefix = "HCV_consensus/{sample}.consensus"     
           shell:
                """
-               samtools mpileup -A -d 6000000 -B -Q 0 --reference {input.shcver2}/{wildcards.sample}_ref.fasta {input.shcver2}/{wildcards.sample}_remap.bam | ivar consensus -p {params.prefix} -q 20 -t 0.8 -n N
+               samtools mpileup -A -d 6000000 -B -Q 0 --reference {input.shcver}/{wildcards.sample}_ref.fasta {input.shcver}/{wildcards.sample}_remap.bam | ivar consensus -p {params.prefix} -q 20 -t 0.8 -n N
                """
 ### genotype consensus ###
 if config["HCV"]:
@@ -160,7 +149,7 @@ def convert_quastTable_to_df(tsv):
 if config["HCV"]:
      rule quast_coverage:
           input:
-               shcver2 = rules.shcver2.output,
+               shcver = rules.shcver.output,
                consensus = rules.ivar_consensus.output.fasta
           output:
                report = "{sample}/{sample}_quast/transposed_report.tsv",
@@ -170,7 +159,7 @@ if config["HCV"]:
                OUT_DIR = "{sample}/{sample}_quast"
           shell:
                """
-               quast {input.consensus} -r {input.shcver2}/{wildcards.sample}_ref.fasta --ref-bam {input.shcver2}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               quast {input.consensus} -r {input.shcver}/{wildcards.sample}_ref.fasta --ref-bam {input.shcver}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
                """
 if config["HCV"]:
      rule compile_qc_fasta:
@@ -195,12 +184,12 @@ if config["HCV"]:
 if config["HCV"]:
      rule samtools_depth:
           input: 
-               shcver2 = rules.shcver2.output
+               shcver = rules.shcver.output
           output: "{sample}/{sample}_depth.tsv"
           conda: "phevir"
           shell:
                """
-               samtools depth -aa {input.shcver2}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}
+               samtools depth -aa {input.shcver}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}
                """  
 # Compute and compile depth stats from BAM for all HCV of the batch
 

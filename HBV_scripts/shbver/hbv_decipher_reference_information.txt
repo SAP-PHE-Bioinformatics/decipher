@@ -1,0 +1,15 @@
+#All HBV genomes in fasta format for each genotype were downloaded from https://hbvdb.lyon.inserm.fr/HBVdb/HBVdbDataset
+#The first 50 genomes were taken from genotypes A,B,C,D,E,F and all sequences were taken for Genotypes G (49 sequences), H (28 sequences), and RF (1194 sequences)
+
+#These 1571 sequences were concatenated into a single file: "hbv_decipher_reference_database_genomes_20230928.fasta"
+
+#Then an alignment was generated using mafft
+
+#run this command in covid-phylogeny conda environment to align reference database
+
+#mafft settings were selected based on number of sequences being >200, <2000
+
+mafft --retree 2 --maxiterate 1000 hbv_decipher_reference_database_genomes_20230928.fasta > HBVRefAlignment.fasta
+
+#This alignment file was used for initialisation of the hbv version of shiver (shbver)
+
