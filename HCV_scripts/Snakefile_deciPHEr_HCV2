@@ -57,13 +57,11 @@ rule align_core:
 rule sort_core:
      input: rules.align_core.output
      output: "{sample}/{sample}_core_aligned.sorted.bam"
-     conda: "phesiqcal"
      shell:
           "samtools sort {input} > {output}"
 rule index_core: 
      input: rules.sort_core.output
      output: "{sample}/{sample}_core_aligned.sorted.bam.bai"
-     conda: "phesiqcal"
      shell:
           "samtools index {input}"
 
@@ -73,7 +71,6 @@ rule locate_core:
           core_bam = rules.sort_core.output,
           idx = rules.index_core.output
      output: "{sample}/{sample}_core_aligned_depth.txt"
-     conda: "phesiqcal"
      shell:
           "samtools depth {input.core_bam} > {output}"
 
@@ -88,7 +85,6 @@ rule ivar_HCV_core_consensus:
    params:
         REF = "{sample}/shcver/shcver_output/{sample}_remap_ref.fasta",
         prefix = "HCV_core_consensus/{sample}_core.consensus"     
-   conda: "phevir"
    shell:
         """
         samtools mpileup -A -d 6000000 -B -Q 0 --reference {params.REF} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` {input.bam} | ivar consensus -p {params.prefix} -q 20 -t 0.85 -n N
@@ -102,7 +98,6 @@ rule make_core_ref:
           remap_ref = "{sample}/shcver/shcver_output/{sample}_remap_ref.fasta",
           core_local = rules.locate_core.output
      output: "{sample}/{sample}_core_ref.fasta"
-     conda: "phesiqcal"
      shell: 
           """
           samtools faidx {input.remap_ref} {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` > {output}
@@ -136,7 +131,7 @@ rule quast_core_coverage:
           OUT_DIR = "{sample}/{sample}_quast_core"
      shell:
           """
-          quast {input.consensus} -r {input.core_ref} --ref-bam {input.bam} --output-dir {params.OUT_DIR}
+          quast {input.consensus} -r {input.core_ref} --ref-bam {input.bam} --min-contig 100 --unaligned-part-size 100 --output-dir {params.OUT_DIR}
           """
 
 rule compile_qc_fasta:
@@ -162,7 +157,6 @@ rule samtools_depth_core:
           bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
           core_local = rules.locate_core.output
      output: "{sample}/{sample}_core_depth.tsv"
-     conda: "phevir"
      shell:
           """
           samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` | datamash min 3 mean 3 median 3 max 3 > {output}
@@ -193,7 +187,6 @@ rule depth_summary:
 rule histogram_WGS:
      input: "{sample}/shcver/shcver_output/{sample}_remap.bam"
      output: "HCV_depth_histograms/{sample}_depth_allpositions.tab"
-     conda: "phesiqcal"
      shell:
           "samtools depth -aa {input} -o {output}"
 
@@ -202,7 +195,6 @@ rule histogram_core:
           bam = "{sample}/shcver/shcver_output/{sample}_remap.bam",
           core_local = rules.locate_core.output
      output: "HCV_depth_histograms/{sample}_depth_core.tab"
-     conda: "phevir"
      shell:    
           """
           samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.core_local}`-`awk 'END {{print$2}}' {input.core_local}` > {output}

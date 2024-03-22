@@ -60,13 +60,11 @@ rule align_pol:
 rule sort_pol:
      input: rules.align_pol.output
      output: "{sample}/{sample}_pol_aligned.sorted.bam"
-     conda: "phesiqcal"
      shell:
           "samtools sort {input} > {output}"
 rule index_pol: 
      input: rules.sort_pol.output
      output: "{sample}/{sample}_pol_aligned.sorted.bam.bai"
-     conda: "phesiqcal"
      shell:
           "samtools index {input}"
 
@@ -76,7 +74,6 @@ rule locate_pol:
           pol_bam = rules.sort_pol.output,
           idx = rules.index_pol.output
      output: "{sample}/{sample}_pol_aligned_depth.txt"
-     conda: "phesiqcal"
      shell:
           "samtools depth {input.pol_bam} > {output}"
 
@@ -91,7 +88,6 @@ rule ivar_HIV_pol_consensus:
    params:
         REF = "{sample}/shiver/shiver_output/{sample}_remap_ref.fasta",
         prefix = "HIV_pol_consensus/{sample}_pol.consensus"     
-   conda: "phevir"
    shell:
         """
         samtools mpileup -A -d 6000000 -B -Q 0 --reference {params.REF} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` {input.bam} | ivar consensus -p {params.prefix} -q 20 -t 0.85 -n N
@@ -105,7 +101,6 @@ rule make_pol_ref:
           remap_ref = "{sample}/shiver/shiver_output/{sample}_remap_ref.fasta",
           pol_local = rules.locate_pol.output
      output: "{sample}/{sample}_pol_ref.fasta"
-     conda: "phesiqcal"
      shell: 
           """
           samtools faidx {input.remap_ref} {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` > {output}
@@ -138,7 +133,7 @@ rule quast_pol_coverage:
           OUT_DIR = "{sample}/{sample}_quast_pol"
      shell:
           """
-          quast {input.consensus} -r {input.pol_ref} --ref-bam {input.bam} --output-dir {params.OUT_DIR}
+          quast {input.consensus} -r {input.pol_ref} --ref-bam {input.bam} --unaligned-part-size 300 --output-dir {params.OUT_DIR}
           """
 
 rule compile_qc_fasta:
@@ -164,7 +159,6 @@ rule samtools_depth_pol:
           bam = "{sample}/shiver/shiver_output/{sample}_remap.bam",
           pol_local = rules.locate_pol.output
      output: "{sample}/{sample}_pol_depth.tsv"
-     conda: "phevir"
      shell:
           """
           samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` | datamash min 3 mean 3 median 3 max 3 > {output}
@@ -197,7 +191,6 @@ rule depth_summary:
 rule histogram_WGS:
      input: "{sample}/shiver/shiver_output/{sample}_remap.bam"
      output: "HIV_depth_histograms/{sample}_depth_allpositions.tab"
-     conda: "phesiqcal"
      shell:
           "samtools depth -aa {input} -o {output}"
 
@@ -206,7 +199,6 @@ rule histogram_pol:
           bam = "{sample}/shiver/shiver_output/{sample}_remap.bam",
           pol_local = rules.locate_pol.output
      output: "HIV_depth_histograms/{sample}_depth_pol.tab"
-     conda: "phevir"
      shell:    
           """
           samtools depth {input.bam} -r {wildcards.sample}_ConsensusRound1_GapsFilled:`awk 'NR==1 {{print$2}}' {input.pol_local}`-`awk 'END {{print$2}}' {input.pol_local}` > {output}
@@ -224,13 +216,17 @@ rule DR_sites:
           mut = "/phe/viro/References/HIV/drug_resistance_sites_from_pol_position_1.txt",
           # This is a manually curated list of nucleotide positions corresponding to all drug resistance sites within the pol ORF (based on data from Standord DB).
           # These positions are written relative to position 1 not position 0 (position in reference = DRM nucleotide position-1). 
-          # For codon number conversion, use the third nucleotide position in the codon (DRM codon position = DRM nucleotide position/3). 
-          prefix = "{sample}/{sample}_bammix_DRM"
+          # If mutations are updated this file AND REF file must be updated. 
+          prefix = "{sample}/{sample}_bammix_DRM",
+          REF = "/phe/viro/References/HIV/drug_resistance_sites_from_pol_position_1.csv"
+          # This is a manually curated annotation file for nucleotide positions corresponding to all drug resistance sites within the pol ORF (based on data from Standord DB).
+          # These positions are written relative to position 1 not position 0 (position in reference = DRM nucleotide position-1). 
+          # If mutations are updated this file AND mut file must be updated. 
      conda: "covid-phylogeny"
      shell:
           """
           start=`awk 'NR==1 {{print$2}}' {input.pol_local}`
           value=$(<{params.mut})
           bammix -b {input.bam} -o {params.prefix} -p $(for x in `echo $value` ; do printf "%s " "$(($start+$x))" ; done)
-          awk 'BEGIN{{OFS=FS=","}} NR==1{{$(NF+1)="pol_nuc_position"}} NR>1{{$(NF+1)=$1+1-start}}1' start=$start {wildcards.sample}/{wildcards.sample}_bammix_DRM_position_base_counts.csv > {output.ann}
+          paste -d "," {wildcards.sample}/{wildcards.sample}_bammix_DRM_position_base_counts.csv {params.REF} > {output.ann}
           """

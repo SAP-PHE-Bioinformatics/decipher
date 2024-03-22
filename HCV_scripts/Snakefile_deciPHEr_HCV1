@@ -104,7 +104,6 @@ if config["HCV"]:
           output:
                fasta = "HCV_consensus/{sample}.consensus.fa",
                qual = "HCV_consensus/{sample}.consensus.qual.txt"
-          conda: "phevir"
           params:
                prefix = "HCV_consensus/{sample}.consensus"     
           shell:
@@ -159,7 +158,7 @@ if config["HCV"]:
                OUT_DIR = "{sample}/{sample}_quast"
           shell:
                """
-               quast {input.consensus} -r {input.shcver}/{wildcards.sample}_ref.fasta --ref-bam {input.shcver}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               quast {input.consensus} -r {input.shcver}/{wildcards.sample}_ref.fasta --ref-bam {input.shcver}/{wildcards.sample}_remap.bam --unaligned-part-size 300 --output-dir {params.OUT_DIR} 
                """
 if config["HCV"]:
      rule compile_qc_fasta:
@@ -186,7 +185,6 @@ if config["HCV"]:
           input: 
                shcver = rules.shcver.output
           output: "{sample}/{sample}_depth.tsv"
-          conda: "phevir"
           shell:
                """
                samtools depth -aa {input.shcver}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}

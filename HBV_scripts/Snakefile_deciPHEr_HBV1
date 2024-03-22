@@ -140,7 +140,7 @@ if config["HBV"]:
                OUT_DIR = "{sample}/{sample}_quast"
           shell:
                """
-               quast {input.consensus} -r {input.shbver}/{wildcards.sample}_ref.fasta --ref-bam {input.shbver}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               quast {input.consensus} -r {input.shbver}/{wildcards.sample}_ref.fasta --ref-bam {input.shbver}/{wildcards.sample}_remap.bam --unaligned-part-size 300 --output-dir {params.OUT_DIR}
                """
 if config["HBV"]:
      rule compile_qc_fasta:

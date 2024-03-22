@@ -136,7 +136,7 @@ if config["HIV"]:
                OUT_DIR = "{sample}/{sample}_quast"
           shell:
                """
-               quast {input.consensus} -r {input.shiver}/{wildcards.sample}_ref.fasta --ref-bam {input.shiver}/{wildcards.sample}_remap.bam --output-dir {params.OUT_DIR}
+               quast {input.consensus} -r {input.shiver}/{wildcards.sample}_ref.fasta --ref-bam {input.shiver}/{wildcards.sample}_remap.bam --unaligned-part-size 300 --output-dir {params.OUT_DIR}
                """
 
 if config["HIV"]:
@@ -164,7 +164,6 @@ if config["HIV"]:
           input: 
                shiver = rules.shiver.output
           output: "{sample}/{sample}_depth.tsv"
-          conda: "phevir"
           shell:
                """
                samtools depth -aa {input.shiver}/{wildcards.sample}_remap.bam | datamash min 3 mean 3 median 3 max 3 > {output}
