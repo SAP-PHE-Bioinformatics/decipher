@@ -79,6 +79,8 @@ Genotype: Any Genotype <br>
 	Sequence type: Nucleotides <br>
 	Include genotype reference sequences <br>
 	Include H77(NC_004102) reference sequence <br>
+## Author
+This pipeline was written by Rosa C. Coldbeck-Shackley.
 
 ## Citations
 Acknowledgments to all the authors of tools used in the pipeline.
