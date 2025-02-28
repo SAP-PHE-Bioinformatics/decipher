@@ -33,7 +33,7 @@ OK (select)
 OK (select)
 
 then added in two genotype 8 reference genomes from NCBI using mafft (MH590698, MH590701)
-mafft --add /phe/viro/References/HCV/genotype_8_concat.fasta ~/tools/HCV_scripts/shcver/HCVRefAlignment.fasta > ~/tools/HCV_scripts/shcver/HCVRefAlignment_plusGT8.fasta
+mafft --add genotype_8_concat.fasta ~/tools/HCV_scripts/shcver/HCVRefAlignment.fasta > ~/tools/HCV_scripts/shcver/HCVRefAlignment_plusGT8.fasta
 
 the current database contains 2784 refereces
 
