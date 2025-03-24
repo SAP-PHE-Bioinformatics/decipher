@@ -20,6 +20,7 @@ if config["negative"]:
                expand("filtered/{negative}_F2.fastq.gz", negative=config["negative"]),
                expand("{negative}/neg_yield.tab", negative=config["negative"]),
                expand("{negative}/neg_kraken2.tab", negative=config["negative"]),
+               "NEG_QC_Summary.csv"
 
 
 ### prepare reads for downstream processing ###
@@ -78,3 +79,128 @@ if config["negative"]:
           shell:
                "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} --paired {input.f1} {input.f2}"
 
+
+if config["negative"]:
+     rule neg_qc_sum:
+          input:
+               yd = expand(rules.fq_neg.output, negative=config["negative"]),
+               kr = expand(rules.kraken_neg.output, negative=config["negative"])
+          output:
+               "NEG_QC_Summary.csv"
+          run:
+               # Importing libraries
+               import pathlib
+               import os
+               import pandas as pd
+               import numpy as np 
+               import glob
+               # selecting the input
+               y_files = f"{input.yd}".split()
+               k_files = f"{input.kr}".split()
+
+               ## Working with yield files only first
+               yield_files = []
+               for y in y_files:
+                    neg_yield = pathlib.Path(y)
+                    df_yield = pd.read_csv(neg_yield, sep = "\t", header = None)
+                    yield_files.append(df_yield)
+
+               # V2 transposing the dataframes and setting first row as header and splitting the file name
+               t_yield_files = []
+               for yf in yield_files:
+                    # Transposing the dataframe, then setting the first row as header, 
+                    # Keeping only the NEG control name by removing full file names separated by delimeters.
+                    new_y_df = yf.transpose()
+                    new_y_df.columns = new_y_df.iloc[0]
+                    new_y_df = new_y_df[1:]
+                    new_y_df['Files'] = new_y_df['Files'].str.split('/|_').str[1]
+                    t_yield_files.append(new_y_df)
+
+               ## combining all individual dataframes into one
+               all_yield_df = pd.DataFrame()
+               all_yield_df = all_yield_df.append(t_yield_files, ignore_index = True)
+               ## Selecting only required data from combined dataframe and setting index by the 'Files' column
+               final_yield_sum = all_yield_df[['Files', 'Reads', 'AvgQual']]
+               final_yield_sum.set_index('Files', inplace = False)
+
+               ####
+               ## Working with kraken files
+               kraken_files = []
+               for k in k_files:
+                    kraken = pathlib.Path(k)
+                    df_kraken = pd.read_csv(kraken, sep = "\t", header = None,
+                    names = ['percentage', 'frag1', 'frag2', 'code', 'taxon_ID', 'name'])
+                    df_kraken['Files'] = f"{kraken.parts[0]}"
+                    kraken_files.append(df_kraken)
+
+               ## Looking for the HIV, HBC and HCV viruses in each NEG kraken output and filter dfs into new list
+               HBV = 'Orthohepadnavirus'
+               HCV = 'Hepacivirus C'
+               HIV = 'Human immunodeficiency virus 1'
+               
+               results_kraken = []
+               for kf in kraken_files:
+                    results_kraken.append(kf[kf['name'].str.contains(HCV)])
+                    results_kraken.append(kf[kf['name'].str.contains(HBV)])
+                    results_kraken.append(kf[kf['name'].str.contains(HIV)])
+               
+               all_kraken_df = pd.DataFrame()
+               all_kraken_df = all_kraken_df.append(results_kraken, ignore_index = True)
+
+               ## Merging the kraken dfs with Yield dfs based on NEG control file names
+               sum_results = pd.merge(final_yield_sum, all_kraken_df, on='Files', how='left')
+               # Only selecting required columns
+               sum_results = sum_results[['Files', 'Reads', 'AvgQual', 'name', 'percentage', 'frag1']]
+
+               ## Editing the dataframe for each NEG control to check for any of the three viruses,
+               ## to manually append as not detected if not found
+
+               # Grouping by 'Files' i.e. neg control name
+               dfs = [v.copy() for k, v in sum_results.groupby('Files')]
+
+               final_df = []
+
+               for d in dfs:
+               # Check if the 'name' column contains 'HCV'
+                    if not d['name'].str.contains(HCV).any():
+                         # If 'HCV' is not present, append a new row with 'HCV'
+                         new_row_HCV = {'name': HCV, 'Files': d.iloc[0,0], 
+                                   'Reads': d.iloc[0,1], 'AvgQual': d.iloc[0,2], 
+                                   'percentage' : "ND", 'frag1' : "ND"}
+                         # Append the new row to the DataFrame
+                         d = d.append(new_row_HCV, ignore_index=True)
+
+                    # Check if 'HBV' is present in any of the 'name' column values
+                    if not d['name'].str.contains(HBV).any():
+                    # If 'HBV' is not present, append a new row with 'HBV'
+                         new_row_HBV = {'name': HBV, 'Files': d.iloc[0,0], 
+                                   'Reads': d.iloc[0,1], 'AvgQual': d.iloc[0,2], 
+                                   'percentage' : "ND", 'frag1' : "ND"}
+                         # Append the new row to the DataFrame
+                         d = d.append(new_row_HBV, ignore_index=True)
+
+                    # Check if 'HIV' is present in any of the 'name' column values
+                    if not d['name'].str.contains(HIV).any():
+                    # If 'HIV' is not present, append a new row with 'HIV'
+                         new_row_HIV = {'name': HIV, 'Files': d.iloc[0,0], 
+                                   'Reads': d.iloc[0,1], 'AvgQual': d.iloc[0,2], 
+                                   'percentage' : "ND", 'frag1' : "ND"}
+                         # Append the new row to the DataFrame
+                         d = d.append(new_row_HIV, ignore_index=True)
+
+                    # dropping the initial rows where NaN was found under 'name' column
+                    d = d.dropna(subset=["name"])
+                    # renaming columns, removing white space, and sorting df alphabetically by virus names
+                    # then appending to final df list
+                    d.rename(columns={"Files":"Sample ID", "Reads":"Total Reads", "name":"Target Virus", 
+                         "percentage":"%", "frag1":"Read Pairs",}, inplace=True)
+                    d = d.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+                    d.sort_values(by='Target Virus', inplace=True)
+                    final_df.append(d)
+
+               # Creating and formatting concatenated dataframe and printing to output file
+               concat_df = pd.DataFrame()
+               concat_df = concat_df.append(final_df, ignore_index=True)
+               concat_df = concat_df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+               concat_df.index = concat_df.index + 1
+               concat_df.to_csv(f"{output}", sep=",")

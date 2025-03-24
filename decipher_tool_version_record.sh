@@ -13,7 +13,7 @@ echo RUN ID,$folder
 
 echo ' '
 
-echo 'Pipeline: decipher v2.0.0'
+echo 'Pipeline: decipher v2.0.1'
 
 echo ' '
 
