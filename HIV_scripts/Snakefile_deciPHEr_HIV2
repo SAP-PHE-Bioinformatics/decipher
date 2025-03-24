@@ -34,7 +34,9 @@ rule all:
      expand("{sample}/{sample}_bammix_DRM_position_base_counts.csv", sample=config["HIV"]),
      expand("{sample}/{sample}_bammix_DRM_position_base_counts.pdf", sample=config["HIV"]),
      expand("bammix_DRM/{sample}_bammix_DRM_position_base_counts_annotated.csv", sample=config["HIV"])
-
+     #expand("bammix_DRM/{sample}_bammix_DRM_position_base_counts_annotated.csv", sample=config["HIV"]),
+     #expand("HIV_DR_Database_sierrapy/{sample}.0.json", sample=config["HIV"])
+     
 ### convert unzipped input reads back into zipped files to save space in folder ### 
 rule zip_input:
      input:
@@ -230,3 +232,15 @@ rule DR_sites:
           bammix -b {input.bam} -o {params.prefix} -p $(for x in `echo $value` ; do printf "%s " "$(($start+$x))" ; done)
           paste -d "," {wildcards.sample}/{wildcards.sample}_bammix_DRM_position_base_counts.csv {params.REF} > {output.ann}
           """
+
+### submit sequences to Stanford HIV Drug Resistance Database  ###
+#rule sierra:
+#     input:
+#          fasta = "HIV_consensus/{sample}.consensus.fa"
+#     output:
+#          json = "HIV_DR_Database_sierrapy/{sample}.0.json"
+#     conda: "sierrapy"
+#     shell:
+#          """
+#          sierrapy fasta {input.fasta} > {output.json}
+#          """
