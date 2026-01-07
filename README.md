@@ -33,37 +33,50 @@ A snakemake workflow processes fastq files of HBV, HCV, and HIV to perform the f
 
 10) HIV pol nucleotide variant analysis at drug resistant sites (bammix)
 
+11) automated report generation of HIV drug resistance analysis via the Stanford HIVDB command-line tool (sierrapy)
+
 ### Outputs
 
-1) sequencing yeild summaries "*_seq_data.tab", 
+1) sequencing yeild summaries `*_seq_data.tab`, 
 
-2) species identification summaries "*_species_identification.tab",
+2) species identification summaries `*_species_identification.tab`,
 
-3) whole genome and typing region consensus sequences "*_consensus/*_consensus.fa",
+3) summary for de novo assembly `denovo.tab`,
 
-4) depth statistics summaries and histograms "depth_summary_*.tsv, *_depth_histograms/*_depth_*.tab",
+4) summary that merges all QC outputs checked for pipeline progression to occur `QC_checkpoint_summary.tsv`,
 
-5) coverage statistics summaries "summary_coverage_*.tsv"
+5) whole genome and typing region consensus sequences `*_consensus/*_consensus.fa`,
 
-6) HCV genotyping "HCV_genotype.tab"
+6) depth statistics summaries and histograms `depth_summary_*.tsv, *_depth_histograms/*_depth_*.tab`,
 
-7) HIV pol drug resistance site nucleotide variant files "bammix/*_DR_position_base_counts.csv"
+7) coverage statistics summaries `summary_coverage_*.tsv`,
+
+8) summaries that merge all QC outputs checked for virus-specific QC to be performed `*_QC_summary.tsv`,
+
+9) HCV genotyping `HCV_genotype.tab`,
+
+10) HIV pol drug resistance site nucleotide variant files `bammix/*_DR_position_base_counts.csv`,
+
+11) HIV drug resistance analysis output from Stanford HIVDB, including raw data `HIV_StanfordDB/*.0.json` and formatted report `*_report_data_final.xlsx` 
 
 #### Negative control (NEG) workflow
 The pipeline includes the sub-workflow for negative controls determined by the sample ID given as "NEG*" in the sample sheet input. 
 Only runs sequencing quality and kraken2 on NEGs to check for any potential contamination of HBV, HCV, and HIV viruses.
 
+### Outputs
+
+1) summary of results for all NEGs on the run checking for the presence of HBV, HCV, and HIV `NEG_QC_Summary.tsv`
 
 ### Standard references and databases:
 Human reference genome: GCA_000001405.29 <br>
 Kraken2 database: k2pluspf (downloaded 20220607)
 
 ### For details on construction of custom references and databases:
-For HBV whole genome reference database see: /path/to/decipher/HBV_scripts/shbver/hbv_decipher_reference_information.txt <br>
+For HBV whole genome reference database see: `/path/to/decipher/HBV_scripts/shbver/hbv_decipher_reference_information.txt` <br>
 
-For HCV whole genome reference database see: /path/to/decipher/HCV_scripts/shcver/hcv_decipher_reference_information.txt <br>
+For HCV whole genome reference database see: `/path/to/decipher/HCV_scripts/shcver/hcv_decipher_reference_information.txt` <br>
 
-For HIV whole genome reference database see: /path/to/decipher/HIV_scripts/shiver/hiv_decipher_reference_information.txt <br>
+For HIV whole genome reference database see: `/path/to/decipher/HIV_scripts/shiver/hiv_decipher_reference_information.txt` <br>
 
 For HCVcore abricate database see the following settings: <br>
 
@@ -118,7 +131,7 @@ Acknowledgments to all the authors of tools used in the pipeline.
 
 10. [bammix](https://github.com/chrisruis/bammix) <br>
     chrisruis.
-    
+ 
 12. [SNAKEMAKE](https://snakemake.github.io/) <br>
     Mölder, F., Jablonski, K.P., Letcher, B., Hall, M.B., Tomkins-Tinch, C.H., Sochat, V., Forster, J., Lee, S., Twardziok, S.O., Kanitz, A., Wilm, A., Holtgrewe, 
     M., Rahmann, S., Nahnsen, S., Köster, J., 2021. Sustainable data analysis with Snakemake. F1000Res 10, 33.
@@ -127,3 +140,7 @@ Acknowledgments to all the authors of tools used in the pipeline.
     Yoo, A.B., Jette, M.A., Grondona, M. (2003). SLURM: Simple Linux Utility for Resource Management. In: Feitelson, D., Rudolph, L., Schwiegelshohn, U. (eds) Job 
     Scheduling Strategies for Parallel Processing. JSSPP 2003. Lecture Notes in Computer Science, vol 2862. Springer, Berlin, Heidelberg. 
     https://doi.org/10.1007/10968987_3
+
+14. [SierraPy](https://github.com/hivdb/sierra-client/blob/master/python/README.md) <br>
+	SierraPy package contains a client and a command line program for HIVDB Sierra GraphQL Webservice. <br>
+	philiptzou.
