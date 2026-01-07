@@ -13,29 +13,46 @@ import pandas as pd
 import numpy as np
 
 #### target rules ####
-
-rule all:
-   input:
-     expand("input/{sample}_R1.fastq.gz", sample=config["HBV"]),
-     expand("input/{sample}_R2.fastq.gz", sample=config["HBV"]),
-     expand("HBV_depth_histograms/{sample}_depth_allpositions.tab", sample=config["HBV"]),
+if config["HBV"]:
+     rule all:
+          input:
+               expand("input/{sample}_R1.fastq.gz", sample=config["HBV"]),
+               expand("input/{sample}_R2.fastq.gz", sample=config["HBV"]),
+               expand("HBV_depth_histograms/{sample}_depth_allpositions.tab", sample=config["HBV"]),
+               "HBV_QC_summary.tsv"
 
 ### convert unzipped input reads back into zipped files to save space in folder ### 
-rule zip_input:
-     input:
-          uzr1 = "input/{sample}_R1.fastq",
-          uzr2 = "input/{sample}_R2.fastq"
-     output:
-          r1 = "input/{sample}_R1.fastq.gz",
-          r2 = "input/{sample}_R2.fastq.gz"
-     run:
-          shell( """ gzip {input.uzr1} """ ), 
-          shell( """ gzip {input.uzr2} """ )
+if config["HBV"]:
+     rule zip_input:
+          input:
+               uzr1 = "input/{sample}_R1.fastq",
+               uzr2 = "input/{sample}_R2.fastq"
+          output:
+               r1 = "input/{sample}_R1.fastq.gz",
+               r2 = "input/{sample}_R2.fastq.gz"
+          run:
+               shell( """ gzip {input.uzr1} """ ), 
+               shell( """ gzip {input.uzr2} """ )
 
 ### generation of depth histograms ###
-rule histogram_WGS:
-     input: "{sample}/shbver/shbver_output/{sample}_remap.bam"
-     output: "HBV_depth_histograms/{sample}_depth_allpositions.tab"
-     conda: "phesiqcal"
-     shell:
-          "samtools depth -aa {input} -o {output}"
+if config["HBV"]:
+     rule histogram_WGS:
+          input: "{sample}/shbver/shbver_output/{sample}_remap.bam"
+          output: "HBV_depth_histograms/{sample}_depth_allpositions.tab"
+          conda: "phesiqcal"
+          shell:
+               "samtools depth -aa {input} -o {output}"
+
+### create HBV QC summary file for depth and coverage ###
+if config["HBV"]:
+     rule HBV_QC:
+          input: 
+               WGS_cov = "summary_coverage_HBV.tsv",
+               WGS_dep = "depth_summary_HBV.tsv"          
+          output: 
+               "HBV_QC_summary.tsv"
+          run: 
+               df1 = pd.read_csv(f"{input.WGS_cov}", sep='\t')
+               df2 = pd.read_csv(f"{input.WGS_dep}", sep='\t')
+               df_all = pd.concat([df1,df2], axis = 1)
+               df_all.to_csv(f"{output}", sep='\t', index =False)

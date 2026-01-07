@@ -36,6 +36,7 @@ rule all:
           expand("{sample}/{sample}.fasta", sample=config["samples"]),
           "denovo.tab",
           expand("{sample}/contig_kraken2.tab", sample = config["samples"]),
+          "QC_checkpoint_summary.tsv",
           "QC_checkpoint_config.yaml"
 
 ### prepare reads for downstream processing ###
@@ -263,21 +264,38 @@ rule assembly_speciesID:
           DB = "/scratch/kraken/k2_pluspf_20220607/"
      shell:
           "kraken2 --threads {threads} --memory-mapping --db {params.DB} --report {output} {input}"
-          
-# generate QC checkpoint config file before starting HBV, HCV and/or HIV scripts, this files checks whether the species match is HBV, HIV or HCV, AND that there are contigs that match that virus
+### create QC checkpoint summary file for filtered reads, species ID and denovo assembly ###
+rule QC_summary:
+     input: 
+          filt_qual = rules.seq_data_filtered.output,
+          species_ID = rules.filtered_combine_kraken.output,
+          ass_qual = rules.assembly_quality.output
+     output: 
+          "QC_checkpoint_summary.tsv"
+     run: 
+          df1 = pd.read_csv(f"{input.filt_qual}", sep='\t')
+          df2 = pd.read_csv(f"{input.species_ID}", sep='\t')
+          df3 = pd.read_csv(f"{input.ass_qual}", sep='\t')
+          df_all = pd.concat([df1,df2,df3], axis = 1)
+          # there was an empty column at the end of df1 added this next step to remove any empty columns
+          df_all.dropna(axis=1, how='all', inplace=True)
+          df_all.to_csv(f"{output}", sep='\t', index =False)
+
+# Before starting HBV, HCV and/or HIV scripts, this scirpt confirms the species match is HBV, HIV or HCV, AND that there are contigs that match that virus so samples processed by a downstream virus-specific pipeline don't cause a crash
+# then confirms which virus samples were submitted for genotyping as (from the config.yaml), only adding the samples if the requested virus matches the ones passing pipeline QC checks to the next QC_checkpoint_config.yaml           
 rule QC_checkpoint:
-#rule assembly_combine_kraken:
      input:
           contig_kraken2 = expand("{sample}/contig_kraken2.tab", sample = config["samples"]),
-          species_ID = rules.filtered_combine_kraken.output
+          species_ID = rules.filtered_combine_kraken.output,
+          config_in = "config.yaml"
      output: 
           "QC_checkpoint_config.yaml"
      run:
           # pull in filtered_species_identification.tab
           reads=pd.read_csv(f"{input.species_ID}", delimiter='\t', header=0)
-          # create an empty list
+          # create an empty list, this will contain a list of presence / absence based on scanning the contigs species ID file for HBV, HCV, and HIV names [accession #, HBV=True/False, HCV=True/False, HIV=True/False]
           presence=[]
-          # assign the {samples} variable to be a list of each file given in the expand()
+          # assign the {samples} variable to be a list of each contig_kraken2.tab file given in the expand()
           samples=f"{input.contig_kraken2}".split()
           for sample in samples:
                # read each sample input as a file path
@@ -295,17 +313,17 @@ rule QC_checkpoint:
           # convert list of presence / absence to dataframe for all samples
           print(presence)
           presence_df=pd.DataFrame(presence, columns=['accession', 'HBV_presence', 'HCV_presence','HIV_presence'])
-          # make accessions into strings for merge
+          # make accessions into strings for merge for both the filtered_species_identification.tab and contig virus presence data
           reads=reads.astype({'#Accession':'string'})
           presence_df=presence_df.astype({'accession':'string'})
-          # merge filtered_species_identification.tab and presence / absence dataframe by accession #
+          # merge filtered_species_identification.tab and presence / absence dataframe by accession 
           reads=pd.merge(reads, presence_df, left_on='#Accession', right_on='accession')
           print(reads)
-          ## create QC checkpoint yaml file for the next part of pipeline
+          ## create lists to store all accessions that pass the pipeline QC requirements for each virus 
           hbv_accessions = []
           hcv_accessions = []
           hiv_accessions = []
-          # iterate through the reads DataFrame and append accessions to the config yaml based on presence of contigs 
+          # iterate through the reads DataFrame and append accessions to the list for each virus based on the top three species match, the presence of virus specific contigs 
           for index, row in reads.iterrows():
                if ('Capuchin monkey hepatitis B virus' in [row['#1 Match'], row['#2 Match'], row['#3 Match']] or 'Woolly monkey hepatitis B virus' in [row['#1 Match'], row['#2 Match'], row['#3 Match']]) and row['HBV_presence']:
                      hbv_accessions.append(row['accession'])
@@ -313,22 +331,67 @@ rule QC_checkpoint:
                      hcv_accessions.append(row['accession'])
                if ('Human immunodeficiency virus 1' in [row['#1 Match'], row['#2 Match']]) and row['HIV_presence']:
                      hiv_accessions.append(row['accession'])
-          print(hbv_accessions)
-          print(hcv_accessions)
-          print(hiv_accessions)
+
+          ## Now check if the accessions passing the pipeline QC check for each virus match the list of requested viruses from the original config file 
+          # open original config.yaml to find out which virus was requested for genotyping
+          with open (f"{input.config_in}", 'r') as c:
+                    conf = yaml.safe_load(c)
+          # convert the config.yaml into a dictionary for all the viruses
+          #req_viruses = {key: conf[key] for key in ['HBV','HCV','HIV']} 
+          # ## NOTE:this resulted in NoneType error when a key was empty, modified below
+          # convert the config.yaml into a dictionary for all the viruses, if none are specified in the config, make am empty list for that virus
+          req_viruses = {
+               'HBV': conf.get('HBV') or [],
+               'HCV': conf.get('HCV') or [],
+               'HIV': conf.get('HIV') or []
+          }
+          
+          # create some lists of accessions that BOTH pass pipeline QC AND have genotyping requested for that virus
+          matched_samples_hbv = []
+          matched_samples_hcv = []
+          matched_samples_hiv = []
+
+          # extract only the samples submitted for HBV genotyping from the ones that passed pipeline QC for HBV
+          dict_req_list_hbv = req_viruses['HBV']
+          # Convert all items in the list to string values
+          str_req_list_hbv = [str(x) for x in dict_req_list_hbv]
+          # Iterate through the comparison list
+          for hbv_accession in hbv_accessions:
+               if hbv_accession in str_req_list_hbv:
+                    matched_samples_hbv.append(hbv_accession)
+
+
+          # extract only the samples submitted for HCV genotyping from the ones that passed pipeline QC for HCV
+          dict_req_list_hcv = req_viruses['HCV']
+          # Convert all items in the list to string values
+          str_req_list_hcv = [str(y) for y in dict_req_list_hcv]
+          # Iterate through the comparison list
+          for hcv_accession in hcv_accessions:
+               if hcv_accession in str_req_list_hcv:
+                    matched_samples_hcv.append(hcv_accession)
+
+
+          # extract only the samples submitted for HIV genotyping from the ones that passed pipeline QC for HIV
+          dict_req_list_hiv = req_viruses['HIV']
+          # Convert all items in the list to string values
+          str_req_list_hiv = [str(z) for z in dict_req_list_hiv]
+          # Iterate through the comparison list
+          for hiv_accession in hiv_accessions:
+               if hiv_accession in str_req_list_hiv:
+                    matched_samples_hiv.append(hiv_accession)
+
+
           # Create a dictionary for the YAML content
           yaml_data = {
-               'HBV': hbv_accessions,
-               'HCV': hcv_accessions,
-               'HIV': hiv_accessions
+               'HBV': matched_samples_hbv,
+               'HCV': matched_samples_hcv,
+               'HIV': matched_samples_hiv
           }
 
-          # dump the YAML data to write output file 
+          # dump the dictionary YAML content to write output QC_checkpoint_config.yaml file 
           yaml_output = yaml.dump(yaml_data, default_flow_style=False)
 
           with open(f"{output}", 'w') as yaml_file:
                yaml_file.write(yaml_output)
        
-### UPON COMPLETION RUN HBV, HCV and/or HIV PIPELINES #### 
-
-
+### UPON COMPLETION RUN HBV, HCV and/or HIV PIPELINES ####

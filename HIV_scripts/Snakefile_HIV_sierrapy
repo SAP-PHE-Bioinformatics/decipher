@@ -1,0 +1,72 @@
+# run this snakefile to automate Stanford HIV DB submission and data collation for individual sample reports
+#### modify config files with sample sheets ####
+# to run in terminal: sbatch --job-name test1 --mem 50G --ntasks 16 --time 960:00:00 -D {pathway to run folder} --wrap "snakemake -j 16 --snakefile {pathway to Snakefile} --use-conda --configfile {pathway to run folder}/QC_HIV_reporting_config.yaml"
+# run in phevir2 conda environment
+
+configfile: "QC_HIV_reporting_config.yaml"
+
+### import other jobs ###
+import pathlib
+import os, getpass, shutil, re, psutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+
+#### target rules ####
+if config["HIV_PASS"]:
+    rule all:
+        input:
+            expand("HIV_StanfordDB/{sample}.0.json", sample=config["HIV_PASS"]),
+            expand("HIV_StanfordDB/{sample}_report_data_intermediate.xlsx", sample=config["HIV_PASS"]),
+            expand("HIV_StanfordDB/{sample}_report_data_final.xlsx", sample=config["HIV_PASS"])
+
+### submit sequences to Stanford HIV Drug Resistance Database  ###
+if config["HIV_PASS"]:
+    rule sierrapy:
+            input:
+                fasta = "HIV_consensus/{sample}.consensus.fa"
+            output:
+                json = "HIV_StanfordDB/{sample}.0.json"
+            params:
+                json_name = "HIV_StanfordDB/{sample}.json" # this is required becuase the tool's output changes the name @_@
+            conda: "sierrapy"
+            shell:
+                """
+                sierrapy fasta {input.fasta} -o {params.json_name}
+                """
+
+### extract data from .json output and format into individual preliminary report ###
+### add extra comments to the end of individual reports ###
+if config["HIV_PASS"]:
+    rule report_format:
+        input:
+            json = rules.sierrapy.output.json
+        output:
+            int_report =  "HIV_StanfordDB/{sample}_report_data_intermediate.xlsx",
+            final_report = "HIV_StanfordDB/{sample}_report_data_final.xlsx"
+        ## pass the reference files containing conditional comments, these files can be downloaded as .csv from: 
+        ## https://hivdb.stanford.edu/dr-summary/comments/PI/
+        ## https://hivdb.stanford.edu/dr-summary/comments/NRTI/
+        ## https://hivdb.stanford.edu/dr-summary/comments/NNRTI/
+        ## https://hivdb.stanford.edu/dr-summary/comments/INSTI/
+        params:
+            REF_PR = "/phe/viro/References/HIV/HIVDB_v9.8_PI_comments.csv",
+            REF_NRTI = "/phe/viro/References/HIV/HIVDB_v9.8_NRTI_comments.csv",
+            REF_NNRTI = "/phe/viro/References/HIV/HIVDB_v9.8_NNRTI_comments.csv",
+            REF_IN = "/phe/viro/References/HIV/HIVDB_v9.8_INSTI_comments.csv"
+        log: "HIV_StanfordDB/{sample}_report_format.log"
+        conda: "phetype"
+        shell:
+            """
+            python /phe/tools/decipher/HIV_scripts/decipher_sierrapy_reporting.py --input {input.json} --intermediate {output.int_report} --output {output.final_report} --ref_PR {params.REF_PR} --ref_NRTI {params.REF_NRTI} --ref_NNRTI {params.REF_NNRTI} --ref_IN {params.REF_IN} >> {log} 2>&1 
+            """        
+        
+
+
+
+        
+        
+
+
+

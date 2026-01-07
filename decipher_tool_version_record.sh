@@ -13,7 +13,7 @@ echo RUN ID,$folder
 
 echo ' '
 
-echo 'Pipeline: decipher v2.0.1'
+echo 'Pipeline: decipher v3.0.0'
 
 echo ' '
 
@@ -92,3 +92,12 @@ SHBVER=$(stat /phe/tools/decipher/HBV_scripts/shbver/ | grep "Modify" | cut -f 2
 SHBVER_DB=$(stat /phe/tools/decipher/HBV_scripts/shbver/HBVRefAlignment.fasta | grep "Modify" | cut -f 2 -d " ")
 echo shbver,$SHBVER,shbver_reference_database,$SHBVER_DB
 
+##### sierrapy tools #####
+conda activate sierrapy
+
+sierrapy --version
+
+##### phetype tools #####
+conda activate phetype
+
+python /phe/tools/decipher/HIV_scripts/decipher_sierrapy_reporting.py --version
