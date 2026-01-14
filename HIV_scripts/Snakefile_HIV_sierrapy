@@ -51,10 +51,11 @@ if config["HIV_PASS"]:
         ## https://hivdb.stanford.edu/dr-summary/comments/NNRTI/
         ## https://hivdb.stanford.edu/dr-summary/comments/INSTI/
         params:
-            REF_PR = "/phe/viro/References/HIV/HIVDB_v9.8_PI_comments.csv",
-            REF_NRTI = "/phe/viro/References/HIV/HIVDB_v9.8_NRTI_comments.csv",
-            REF_NNRTI = "/phe/viro/References/HIV/HIVDB_v9.8_NNRTI_comments.csv",
-            REF_IN = "/phe/viro/References/HIV/HIVDB_v9.8_INSTI_comments.csv"
+            # last updated 14/01/2025
+            REF_PR = "/phe/viro/References/HIV/HIVDB_v10.0-1_PI_comments.csv",
+            REF_NRTI = "/phe/viro/References/HIV/HIVDB_v10.0-1_NRTI_comments.csv",
+            REF_NNRTI = "/phe/viro/References/HIV/HIVDB_v10.0-1_NNRTI_comments.csv",
+            REF_IN = "/phe/viro/References/HIV/HIVDB_v10.0-1_INSTI_comments.csv"
         log: "HIV_StanfordDB/{sample}_report_format.log"
         conda: "phetype"
         shell:
